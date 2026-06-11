@@ -1,0 +1,280 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Escrow — Local AI Data Governance</title>
+<style>
+  :root {
+    --bg: #0f1419; --panel: #1a2129; --border: #2c3640;
+    --text: #d8dee6; --muted: #8a97a5; --accent: #4da3ff;
+    --green: #3ecf8e; --red: #ff6b6b; --amber: #ffb347;
+  }
+  * { box-sizing: border-box; }
+  body { margin: 0; font-family: -apple-system, "Segoe UI", Roboto, sans-serif;
+         background: var(--bg); color: var(--text); font-size: 14px; }
+  header { display: flex; align-items: center; gap: 16px; padding: 12px 20px;
+           background: var(--panel); border-bottom: 1px solid var(--border); }
+  header h1 { font-size: 18px; margin: 0; }
+  header .sub { color: var(--muted); font-size: 12px; }
+  .spacer { flex: 1; }
+  button { background: var(--accent); color: #06121f; border: none; padding: 8px 14px;
+           border-radius: 6px; cursor: pointer; font-weight: 600; font-size: 13px; }
+  button.secondary { background: var(--border); color: var(--text); }
+  button.danger { background: var(--red); }
+  button.success { background: var(--green); }
+  .badge { background: var(--amber); color: #06121f; border-radius: 10px;
+           padding: 1px 8px; font-size: 12px; font-weight: 700; margin-left: 6px; }
+  main { display: flex; gap: 14px; padding: 14px 20px; align-items: flex-start; }
+  .panel { background: var(--panel); border: 1px solid var(--border);
+           border-radius: 10px; padding: 16px; }
+  #queryPanel { flex: 2; }
+  #policyPanel { flex: 1; max-width: 380px; }
+  .panel h2 { margin: 0 0 12px; font-size: 14px; text-transform: uppercase;
+              letter-spacing: 0.6px; color: var(--muted); }
+  label { display: block; margin: 10px 0 4px; color: var(--muted); font-size: 12px; }
+  select, textarea, input { width: 100%; background: #11161c; color: var(--text);
+    border: 1px solid var(--border); border-radius: 6px; padding: 8px; font-size: 13px; }
+  textarea { font-family: ui-monospace, Menlo, monospace; min-height: 90px; resize: vertical; }
+  .row { display: flex; gap: 8px; margin-top: 10px; flex-wrap: wrap; }
+  pre { background: #11161c; border: 1px solid var(--border); border-radius: 6px;
+        padding: 10px; overflow: auto; font-size: 12px; white-space: pre-wrap; }
+  table { border-collapse: collapse; width: 100%; margin-top: 8px; font-size: 12px; }
+  th, td { border: 1px solid var(--border); padding: 5px 8px; text-align: left; }
+  th { background: #11161c; color: var(--muted); }
+  .decision { display: inline-block; padding: 3px 10px; border-radius: 6px;
+              font-weight: 700; margin-bottom: 8px; }
+  .decision.allowed { background: rgba(62,207,142,.15); color: var(--green); }
+  .decision.denied, .decision.error { background: rgba(255,107,107,.15); color: var(--red); }
+  .decision.pending { background: rgba(255,179,71,.15); color: var(--amber); }
+  .reason { color: var(--muted); margin: 3px 0; font-size: 13px; }
+  .rule-chip { display: inline-block; background: #11161c; border: 1px solid var(--amber);
+               color: var(--amber); border-radius: 5px; padding: 1px 7px;
+               font-size: 11px; margin: 2px 3px 2px 0; font-family: monospace; }
+  #auditPanel { margin: 0 20px 20px; }
+  .queue-item { border: 1px solid var(--border); border-radius: 8px; padding: 12px;
+                margin-bottom: 10px; background: #11161c; }
+  .hidden { display: none; }
+  details summary { cursor: pointer; color: var(--accent); font-size: 12px; }
+  .examples a { color: var(--accent); cursor: pointer; display: block;
+                font-size: 12px; margin: 3px 0; text-decoration: none; }
+  .muted { color: var(--muted); font-size: 12px; }
+</style>
+</head>
+<body>
+<header>
+  <h1>Escrow</h1>
+  <span class="sub">Local AI Data Governance — PoC</span>
+  <div class="spacer"></div>
+  <button class="secondary" id="queueToggle">Approval queue <span class="badge" id="queueCount">0</span></button>
+  <button class="secondary" id="auditToggle">Audit log</button>
+  <button class="secondary" id="policyToggle">Policy inspector</button>
+</header>
+
+<div id="queuePanel" class="panel hidden" style="margin:14px 20px 0;">
+  <h2>Human approval queue</h2>
+  <div id="queueList" class="muted">No pending requests.</div>
+</div>
+
+<main>
+  <div id="queryPanel" class="panel">
+    <h2>Query panel</h2>
+    <label>Agent role</label>
+    <select id="roleSelect"></select>
+    <div class="muted" id="roleDesc"></div>
+
+    <label>Natural language question (optional — generates SQL via local LLM)</label>
+    <div class="row" style="margin-top:0">
+      <input id="nlInput" placeholder="e.g. What is the average sale amount per product?" style="flex:1">
+      <button class="secondary" id="nlBtn">Generate SQL</button>
+    </div>
+
+    <label>SQL (editable before submission)</label>
+    <textarea id="sqlInput" spellcheck="false">SELECT SUM(amount) FROM sales_transactions</textarea>
+
+    <div class="row">
+      <button id="submitBtn">Submit query</button>
+    </div>
+
+    <details class="examples" style="margin-top:10px">
+      <summary>Demo queries</summary>
+      <a data-role="finance_auditor" data-sql="SELECT SUM(amount) FROM sales_transactions">1. Clean allow — finance_auditor totals sales</a>
+      <a data-role="sales_analyst" data-sql="SELECT customer_id, amount FROM sales_transactions LIMIT 10">2. Aggregation enforcement — row-level blocked</a>
+      <a data-role="sales_analyst" data-sql="SELECT customer_id, amount FROM sales_transactions">3. Aggregation rewrite suggestion</a>
+      <a data-role="finance_auditor" data-sql="SELECT * FROM customers c JOIN health_proxy h ON c.id = h.customer_id">4. Ethics block — customers × health_proxy</a>
+      <a data-role="hr_assistant" data-sql="SELECT AVG(gross) FROM payroll WHERE employee_id IN (SELECT id FROM employees WHERE department = 'Sales')">5. Escalation to LLM — ambiguous subquery</a>
+      <a data-role="finance_auditor" data-sql="SELECT e.department, SUM(s.amount) FROM sales_transactions s JOIN employees e ON e.id = s.employee_id GROUP BY e.department">6. Escalation to human — sales × employees</a>
+    </details>
+
+    <div id="resultArea" style="margin-top:16px"></div>
+  </div>
+
+  <div id="policyPanel" class="panel">
+    <h2>Policy inspector</h2>
+    <div class="muted">Active policy for selected role (read-only).</div>
+    <pre id="policyView">—</pre>
+    <div id="triggeredRules"></div>
+  </div>
+</main>
+
+<div id="auditPanel" class="panel hidden">
+  <h2>Audit log</h2>
+  <div class="row" style="margin:0 0 10px">
+    <select id="auditRole" style="max-width:200px"><option value="">All roles</option></select>
+    <select id="auditDecision" style="max-width:200px">
+      <option value="">All decisions</option>
+      <option>allowed</option><option>denied</option><option>escalated</option><option>approved</option>
+    </select>
+    <button class="secondary" id="auditRefresh">Refresh</button>
+  </div>
+  <div id="auditTable" class="muted">No entries.</div>
+</div>
+
+<script>
+const $ = id => document.getElementById(id);
+const api = (path, opts) => fetch(path, opts).then(r => r.json());
+
+let rolesData = {};
+
+async function init() {
+  rolesData = await api('/api/roles');
+  const sel = $('roleSelect'), auditSel = $('auditRole');
+  for (const [name, cfg] of Object.entries(rolesData)) {
+    sel.add(new Option(name, name));
+    auditSel.add(new Option(name, name));
+  }
+  sel.onchange = loadPolicy;
+  await loadPolicy();
+  await refreshQueue();
+  setInterval(refreshQueue, 5000);
+}
+
+async function loadPolicy() {
+  const role = $('roleSelect').value;
+  $('roleDesc').textContent = rolesData[role]?.description || '';
+  const data = await api('/api/policy/' + role);
+  $('policyView').textContent = JSON.stringify(data.policy, null, 2)
+    + '\n\nEthics rules (all roles):\n'
+    + JSON.stringify(data.ethics_rules, null, 2);
+}
+
+function esc(s) {
+  return String(s).replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;');
+}
+
+function renderTable(columns, rows) {
+  let h = '<table><tr>' + columns.map(c => `<th>${esc(c)}</th>`).join('') + '</tr>';
+  for (const r of rows.slice(0, 200))
+    h += '<tr>' + r.map(v => `<td>${esc(v ?? '')}</td>`).join('') + '</tr>';
+  return h + '</table>';
+}
+
+function renderResult(res) {
+  const area = $('resultArea');
+  let cls = res.decision === 'allowed' ? 'allowed' : res.decision === 'pending' ? 'pending' : 'denied';
+  let h = `<span class="decision ${cls}">${esc(res.decision.toUpperCase())}</span>`;
+  if (res.confidence !== undefined)
+    h += ` <span class="muted">confidence ${Number(res.confidence).toFixed(2)} · decided by ${esc(res.decided_by || 'engine')}</span>`;
+  for (const r of res.reasoning || []) h += `<div class="reason">• ${esc(r)}</div>`;
+  if (res.suggested_rewrite) {
+    h += `<div class="reason" style="margin-top:6px">Suggested safer rewrite:</div>
+          <pre>${esc(res.suggested_rewrite)}</pre>
+          <button class="secondary" onclick="useRewrite()">Use rewrite</button>`;
+    window._rewrite = res.suggested_rewrite;
+  }
+  if (res.decision === 'pending')
+    h += `<div class="reason">Request #${res.queue_id} is waiting for human approval (top bar).</div>`;
+  if (res.rows) {
+    h += `<div class="muted" style="margin-top:8px">${res.row_count} row(s)</div>`;
+    h += renderTable(res.columns, res.rows);
+  }
+  area.innerHTML = h;
+
+  const tr = $('triggeredRules');
+  tr.innerHTML = (res.triggered_rules || []).length
+    ? '<div class="muted" style="margin-top:10px">Rules triggered by last query:</div>'
+      + res.triggered_rules.map(r => `<span class="rule-chip">${esc(r)}</span>`).join('')
+    : '';
+}
+
+function useRewrite() { $('sqlInput').value = window._rewrite; }
+
+$('submitBtn').onclick = async () => {
+  $('resultArea').innerHTML = '<span class="muted">Evaluating…</span>';
+  const res = await api('/api/query', {
+    method: 'POST', headers: {'Content-Type': 'application/json'},
+    body: JSON.stringify({ role: $('roleSelect').value, sql: $('sqlInput').value })
+  });
+  renderResult(res);
+  refreshQueue(); refreshAudit();
+};
+
+$('nlBtn').onclick = async () => {
+  const q = $('nlInput').value.trim();
+  if (!q) return;
+  $('nlBtn').textContent = '…';
+  const res = await api('/api/generate_sql', {
+    method: 'POST', headers: {'Content-Type': 'application/json'},
+    body: JSON.stringify({ question: q })
+  });
+  $('nlBtn').textContent = 'Generate SQL';
+  $('sqlInput').value = res.sql;
+  if (res.note) alert(res.note);
+};
+
+document.querySelectorAll('.examples a').forEach(a => a.onclick = () => {
+  $('roleSelect').value = a.dataset.role;
+  loadPolicy();
+  $('sqlInput').value = a.dataset.sql;
+});
+
+async function refreshQueue() {
+  const items = await api('/api/queue');
+  $('queueCount').textContent = items.length;
+  const list = $('queueList');
+  if (!items.length) { list.innerHTML = '<span class="muted">No pending requests.</span>'; return; }
+  list.innerHTML = items.map(it => `
+    <div class="queue-item">
+      <div><b>#${it.id}</b> · role <b>${esc(it.role)}</b> · tables: ${esc(it.tables)} · <span class="muted">${esc(it.ts)}</span></div>
+      <pre>${esc(it.sql)}</pre>
+      <div class="reason">${esc(it.reasoning)}</div>
+      <label>Optional rewrite before approving</label>
+      <textarea id="rw${it.id}" style="min-height:50px">${esc(it.sql)}</textarea>
+      <div class="row">
+        <button class="success" onclick="decide(${it.id}, true)">Approve</button>
+        <button class="danger" onclick="decide(${it.id}, false)">Deny</button>
+      </div>
+    </div>`).join('');
+}
+
+async function decide(id, approve) {
+  const res = await api(`/api/queue/${id}/decision`, {
+    method: 'POST', headers: {'Content-Type': 'application/json'},
+    body: JSON.stringify({ approve, rewritten_sql: $(`rw${id}`).value })
+  });
+  renderResult(res);
+  refreshQueue(); refreshAudit();
+}
+
+async function refreshAudit() {
+  const params = new URLSearchParams();
+  if ($('auditRole').value) params.set('role', $('auditRole').value);
+  if ($('auditDecision').value) params.set('decision', $('auditDecision').value);
+  const items = await api('/api/audit?' + params);
+  if (!items.length) { $('auditTable').innerHTML = '<span class="muted">No entries.</span>'; return; }
+  $('auditTable').innerHTML = renderTable(
+    ['timestamp', 'role', 'hash', 'sql', 'decision', 'confidence', 'decided by', 'reasoning', 'ms'],
+    items.map(i => [i.ts, i.role, i.query_hash, i.sql, i.decision,
+                    (i.confidence ?? 0).toFixed(2), i.decided_by, i.reasoning,
+                    (i.duration_ms ?? 0).toFixed(0)]));
+}
+
+$('queueToggle').onclick = () => $('queuePanel').classList.toggle('hidden');
+$('auditToggle').onclick = () => { $('auditPanel').classList.toggle('hidden'); refreshAudit(); };
+$('policyToggle').onclick = () => $('policyPanel').classList.toggle('hidden');
+$('auditRefresh').onclick = refreshAudit;
+
+init();
+</script>
+</body>
+</html>

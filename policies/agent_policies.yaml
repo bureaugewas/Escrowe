@@ -1,0 +1,40 @@
+roles:
+
+  sales_analyst:
+    description: "Can analyse sales performance, no individual customer records"
+    tables:
+      sales_transactions:
+        access: aggregated_only   # never row-level
+        allowed_aggregations: [SUM, AVG, COUNT, MAX, MIN]
+        group_by_required: true
+      products:
+        access: full
+      customers:
+        access: aggregated_only
+    max_result_rows: 100
+
+  hr_assistant:
+    description: "Can access HR data, never correlated with performance metrics"
+    tables:
+      employees:
+        access: full
+      payroll:
+        access: aggregated_only
+    prohibited_joins:
+      - [employees, sales_transactions]  # cannot correlate people with performance
+
+  finance_auditor:
+    description: "Read-only access to financial tables, full aggregation allowed"
+    tables:
+      sales_transactions:
+        access: full
+      payroll:
+        access: full
+    read_only: true
+
+  anonymous_demo:
+    description: "Public demo role, aggregations only, no sensitive tables"
+    tables:
+      sales_transactions:
+        access: aggregated_only
+    prohibited_tables: [employees, payroll, customers]
