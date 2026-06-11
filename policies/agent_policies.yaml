@@ -32,6 +32,16 @@ roles:
         access: full
     read_only: true
 
+  trusted_analyst:
+    description: "Full read access to all tables — quick start for your own database; PII columns are still masked in results"
+    default_table_access: full
+    read_only: true
+
+  data_analyst:
+    description: "Aggregated access to all tables — safe default for your own database"
+    default_table_access: aggregated_only
+    read_only: true
+
   anonymous_demo:
     description: "Public demo role, aggregations only, no sensitive tables"
     tables:

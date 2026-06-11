@@ -1,7 +1,7 @@
 """Policy engine: parse SQL, check policies, score confidence.
 
 Deterministic and testable independently of the LLM — this module never
-calls Ollama. It returns a decision plus a confidence score; the caller
+calls an LLM. It returns a decision plus a confidence score; the caller
 (main.py) escalates to the LLM reviewer and the human queue when the
 confidence is too low.
 """
@@ -97,13 +97,14 @@ def _suggest_rewrite(table: str, row_columns: list) -> str:
         aggs.append("AVG(amount) AS avg_amount")
     group_candidates = [c for c in row_columns
                         if c not in ("*", "amount", "id") and not c.endswith("_id")]
-    group_by = f" GROUP BY {group_candidates[0]}" if group_candidates else ""
+    group_by = " GROUP BY {}".format(group_candidates[0]) if group_candidates else ""
     if group_by:
         aggs.insert(0, group_candidates[0])
-    return f"SELECT {', '.join(aggs)} FROM {table}{group_by}"
+    return "SELECT {} FROM {}{}".format(", ".join(aggs), table, group_by)
 
 
-def evaluate_query(sql: str, agent_role: str, policies: Optional[dict] = None) -> Decision:
+def evaluate_query(sql: str, agent_role: str,
+                   policies: Optional[dict] = None) -> Decision:
     policies = policies or load_policies()
     roles = policies["roles"]
 
@@ -113,6 +114,7 @@ def evaluate_query(sql: str, agent_role: str, policies: Optional[dict] = None) -
 
     role = roles[agent_role]
     role_tables = role.get("tables", {}) or {}
+    default_access = role.get("default_table_access")
     pq = parse_sql(sql)
 
     if pq.error:
@@ -135,7 +137,7 @@ def evaluate_query(sql: str, agent_role: str, policies: Optional[dict] = None) -
     for combo in policies["ethics"]:
         combo_tables = {t.lower() for t in combo["tables"]}
         if combo_tables <= query_tables:
-            triggered.append(f"ethics:{'+'.join(sorted(combo_tables))}")
+            triggered.append("ethics:" + "+".join(sorted(combo_tables)))
             if combo.get("escalate_instead_of_block"):
                 reasoning.append(
                     f"Ethics rule: {combo['reason']} — escalated to human approval.")
@@ -143,22 +145,27 @@ def evaluate_query(sql: str, agent_role: str, policies: Optional[dict] = None) -
             reasoning.append(f"Ethics rule: {combo['reason']}")
             return Decision("deny", 1.0, reasoning, triggered, parsed=pq)
 
-    # 3. Table access for this role
+    # 3. Table access for this role → build effective access rules
     prohibited = {t.lower() for t in role.get("prohibited_tables", []) or []}
     known_tables = {t.lower() for t in _all_known_tables(policies)}
+    effective_rules: dict = {}
     for table in pq.tables:
         if table in prohibited:
             triggered.append(f"prohibited_table:{table}")
             reasoning.append(f"Table '{table}' is explicitly prohibited for role "
                              f"'{agent_role}'.")
             return Decision("deny", 1.0, reasoning, triggered, parsed=pq)
-        if table not in role_tables:
+        if table in role_tables:
+            effective_rules[table] = role_tables[table] or {}
+        elif default_access:
+            effective_rules[table] = {"access": default_access}
+        else:
             triggered.append(f"table_not_allowed:{table}")
             reasoning.append(f"Table '{table}' is not in the allowed tables for role "
                              f"'{agent_role}'.")
             # Policy clearly covers known tables; unknown tables are ambiguous.
             conf = 0.95 if table in known_tables else 0.35
-            if conf < 1.0 and table not in known_tables:
+            if table not in known_tables:
                 reasoning.append(f"Table '{table}' is not referenced anywhere in the "
                                  "policy files — the policy does not clearly cover "
                                  "this case.")
@@ -166,8 +173,7 @@ def evaluate_query(sql: str, agent_role: str, policies: Optional[dict] = None) -
 
     # 4. Aggregation requirements
     suggested_rewrite = None
-    for table in pq.tables:
-        rule = role_tables.get(table) or {}
+    for table, rule in effective_rules.items():
         if rule.get("access") != "aggregated_only":
             continue
         if pq.row_columns:
@@ -186,8 +192,7 @@ def evaluate_query(sql: str, agent_role: str, policies: Optional[dict] = None) -
             return Decision("deny", 0.9, reasoning, triggered, parsed=pq)
         allowed_aggs = {a.upper() for a in rule.get("allowed_aggregations", []) or []}
         if allowed_aggs:
-            used = set(pq.aggregations)
-            illegal = used - allowed_aggs
+            illegal = set(pq.aggregations) - allowed_aggs
             if illegal:
                 triggered.append(f"aggregation_not_allowed:{table}")
                 reasoning.append(f"Aggregations {sorted(illegal)} are not permitted "
@@ -215,7 +220,7 @@ def evaluate_query(sql: str, agent_role: str, policies: Optional[dict] = None) -
     for pair in role.get("prohibited_joins", []) or []:
         pair_set = {t.lower() for t in pair}
         if pair_set <= query_tables:
-            triggered.append(f"prohibited_join:{'+'.join(sorted(pair_set))}")
+            triggered.append("prohibited_join:" + "+".join(sorted(pair_set)))
             if pq.joins:
                 reasoning.append(f"Role '{agent_role}' may not join "
                                  f"{sorted(pair_set)}.")
@@ -251,11 +256,14 @@ def _all_known_tables(policies: dict) -> set:
     return known
 
 
-def policy_excerpt_for(agent_role: str, tables: list, policies: dict) -> str:
-    """Build the policy context string sent to the LLM reviewer."""
+def policy_excerpt_for(agent_role: str, tables: list,
+                       policies: Optional[dict] = None) -> str:
+    """Policy context string for LLM prompts (reviewer and SQL generator)."""
+    policies = policies or load_policies()
     role = policies["roles"].get(agent_role, {})
     relevant_ethics = [c for c in policies["ethics"]
-                       if {t.lower() for t in c["tables"]} & set(tables)]
+                       if not tables or
+                       {t.lower() for t in c["tables"]} & set(tables)]
     return yaml.safe_dump({"role_policy": {agent_role: role},
                            "relevant_ethics_rules": relevant_ethics},
                           sort_keys=False)

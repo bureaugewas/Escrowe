@@ -8,7 +8,7 @@
   :root {
     --bg: #0f1419; --panel: #1a2129; --border: #2c3640;
     --text: #d8dee6; --muted: #8a97a5; --accent: #4da3ff;
-    --green: #3ecf8e; --red: #ff6b6b; --amber: #ffb347;
+    --green: #3ecf8e; --red: #ff6b6b; --amber: #ffb347; --pink: #ff8fb3;
   }
   * { box-sizing: border-box; }
   body { margin: 0; font-family: -apple-system, "Segoe UI", Roboto, sans-serif;
@@ -28,20 +28,22 @@
   main { display: flex; gap: 14px; padding: 14px 20px; align-items: flex-start; }
   .panel { background: var(--panel); border: 1px solid var(--border);
            border-radius: 10px; padding: 16px; }
-  #queryPanel { flex: 2; }
-  #policyPanel { flex: 1; max-width: 380px; }
-  .panel h2 { margin: 0 0 12px; font-size: 14px; text-transform: uppercase;
+  #explorer { width: 300px; flex-shrink: 0; }
+  #askPanel { flex: 1; min-width: 0; }
+  #policyPanel { width: 340px; flex-shrink: 0; }
+  .panel h2 { margin: 0 0 12px; font-size: 13px; text-transform: uppercase;
               letter-spacing: 0.6px; color: var(--muted); }
   label { display: block; margin: 10px 0 4px; color: var(--muted); font-size: 12px; }
   select, textarea, input { width: 100%; background: #11161c; color: var(--text);
     border: 1px solid var(--border); border-radius: 6px; padding: 8px; font-size: 13px; }
-  textarea { font-family: ui-monospace, Menlo, monospace; min-height: 90px; resize: vertical; }
+  textarea { min-height: 70px; resize: vertical; }
   .row { display: flex; gap: 8px; margin-top: 10px; flex-wrap: wrap; }
   pre { background: #11161c; border: 1px solid var(--border); border-radius: 6px;
         padding: 10px; overflow: auto; font-size: 12px; white-space: pre-wrap; }
   table { border-collapse: collapse; width: 100%; margin-top: 8px; font-size: 12px; }
   th, td { border: 1px solid var(--border); padding: 5px 8px; text-align: left; }
   th { background: #11161c; color: var(--muted); }
+  th.pii { color: var(--pink); }
   .decision { display: inline-block; padding: 3px 10px; border-radius: 6px;
               font-weight: 700; margin-bottom: 8px; }
   .decision.allowed { background: rgba(62,207,142,.15); color: var(--green); }
@@ -51,14 +53,44 @@
   .rule-chip { display: inline-block; background: #11161c; border: 1px solid var(--amber);
                color: var(--amber); border-radius: 5px; padding: 1px 7px;
                font-size: 11px; margin: 2px 3px 2px 0; font-family: monospace; }
-  #auditPanel { margin: 0 20px 20px; }
+  .pii-chip { display: inline-block; background: rgba(255,143,179,.12); color: var(--pink);
+              border: 1px solid var(--pink); border-radius: 5px; padding: 0 6px;
+              font-size: 10px; margin-left: 6px; }
+  /* explorer */
+  .tbl { margin-bottom: 4px; }
+  .tbl-head { display: flex; align-items: center; gap: 6px; cursor: pointer;
+              padding: 6px 8px; border-radius: 6px; }
+  .tbl-head:hover { background: #11161c; }
+  .tbl-head b { font-size: 13px; }
+  .tbl-head .cnt { color: var(--muted); font-size: 11px; margin-left: auto; }
+  .cols { margin: 0 0 6px 18px; display: none; }
+  .tbl.open .cols { display: block; }
+  .col-row { display: flex; align-items: center; font-size: 12px; padding: 2px 0;
+             color: var(--muted); }
+  .col-row .ctype { margin-left: auto; font-size: 10px; color: #5a6775; }
+  .dbpath { font-size: 11px; color: var(--muted); word-break: break-all;
+            margin-bottom: 10px; }
+  #auditPanel, #queuePanel { margin: 0 20px 20px; }
   .queue-item { border: 1px solid var(--border); border-radius: 8px; padding: 12px;
                 margin-bottom: 10px; background: #11161c; }
   .hidden { display: none; }
-  details summary { cursor: pointer; color: var(--accent); font-size: 12px; }
-  .examples a { color: var(--accent); cursor: pointer; display: block;
-                font-size: 12px; margin: 3px 0; text-decoration: none; }
   .muted { color: var(--muted); font-size: 12px; }
+  /* modal */
+  #overlay { position: fixed; inset: 0; background: rgba(0,0,0,.6);
+             display: none; align-items: flex-start; justify-content: center;
+             padding-top: 60px; z-index: 10; }
+  #overlay.show { display: flex; }
+  #settings { width: 620px; max-height: 80vh; overflow: auto; }
+  .browser { border: 1px solid var(--border); border-radius: 6px; background: #11161c;
+             max-height: 220px; overflow: auto; margin-top: 6px; font-size: 12px; }
+  .browser div { padding: 5px 10px; cursor: pointer; }
+  .browser div:hover { background: var(--panel); }
+  .browser .dir { color: var(--accent); }
+  .browser .dbfile { color: var(--green); font-weight: 600; }
+  .status-dot { display: inline-block; width: 8px; height: 8px; border-radius: 50%;
+                margin-right: 6px; }
+  .ok { background: var(--green); } .bad { background: var(--red); }
+  .spin { color: var(--muted); }
 </style>
 </head>
 <body>
@@ -68,48 +100,46 @@
   <div class="spacer"></div>
   <button class="secondary" id="queueToggle">Approval queue <span class="badge" id="queueCount">0</span></button>
   <button class="secondary" id="auditToggle">Audit log</button>
-  <button class="secondary" id="policyToggle">Policy inspector</button>
+  <button class="secondary" id="policyToggle">Policy</button>
+  <button class="secondary" id="settingsBtn">⚙ Settings</button>
 </header>
 
-<div id="queuePanel" class="panel hidden" style="margin:14px 20px 0;">
+<div id="queuePanel" class="panel hidden" style="margin-top:14px">
   <h2>Human approval queue</h2>
   <div id="queueList" class="muted">No pending requests.</div>
 </div>
 
 <main>
-  <div id="queryPanel" class="panel">
-    <h2>Query panel</h2>
+  <!-- database explorer, left -->
+  <div id="explorer" class="panel">
+    <h2>Database</h2>
+    <div class="dbpath" id="dbPath">—</div>
+    <div id="tableList" class="muted">Loading…</div>
+    <div class="muted" style="margin-top:10px">
+      <span class="pii-chip">PII</span> columns are masked in previews and results.
+    </div>
+  </div>
+
+  <!-- ask panel, center -->
+  <div id="askPanel" class="panel">
+    <h2>Ask a question</h2>
     <label>Agent role</label>
     <select id="roleSelect"></select>
     <div class="muted" id="roleDesc"></div>
 
-    <label>Natural language question (optional — generates SQL via local LLM)</label>
-    <div class="row" style="margin-top:0">
-      <input id="nlInput" placeholder="e.g. What is the average sale amount per product?" style="flex:1">
-      <button class="secondary" id="nlBtn">Generate SQL</button>
-    </div>
-
-    <label>SQL (editable before submission)</label>
-    <textarea id="sqlInput" spellcheck="false">SELECT SUM(amount) FROM sales_transactions</textarea>
-
+    <label>Your question</label>
+    <textarea id="questionInput" placeholder="e.g. What is the average sale amount per product category?"></textarea>
     <div class="row">
-      <button id="submitBtn">Submit query</button>
+      <button id="askBtn">Ask</button>
+      <span class="muted" id="llmHint" style="align-self:center"></span>
     </div>
-
-    <details class="examples" style="margin-top:10px">
-      <summary>Demo queries</summary>
-      <a data-role="finance_auditor" data-sql="SELECT SUM(amount) FROM sales_transactions">1. Clean allow — finance_auditor totals sales</a>
-      <a data-role="sales_analyst" data-sql="SELECT customer_id, amount FROM sales_transactions LIMIT 10">2. Aggregation enforcement — row-level blocked</a>
-      <a data-role="sales_analyst" data-sql="SELECT customer_id, amount FROM sales_transactions">3. Aggregation rewrite suggestion</a>
-      <a data-role="finance_auditor" data-sql="SELECT * FROM customers c JOIN health_proxy h ON c.id = h.customer_id">4. Ethics block — customers × health_proxy</a>
-      <a data-role="hr_assistant" data-sql="SELECT AVG(gross) FROM payroll WHERE employee_id IN (SELECT id FROM employees WHERE department = 'Sales')">5. Escalation to LLM — ambiguous subquery</a>
-      <a data-role="finance_auditor" data-sql="SELECT e.department, SUM(s.amount) FROM sales_transactions s JOIN employees e ON e.id = s.employee_id GROUP BY e.department">6. Escalation to human — sales × employees</a>
-    </details>
 
     <div id="resultArea" style="margin-top:16px"></div>
+    <div id="previewArea" style="margin-top:16px"></div>
   </div>
 
-  <div id="policyPanel" class="panel">
+  <!-- policy inspector, right (collapsible) -->
+  <div id="policyPanel" class="panel hidden">
     <h2>Policy inspector</h2>
     <div class="muted">Active policy for selected role (read-only).</div>
     <pre id="policyView">—</pre>
@@ -130,22 +160,63 @@
   <div id="auditTable" class="muted">No entries.</div>
 </div>
 
+<!-- settings modal -->
+<div id="overlay">
+  <div id="settings" class="panel">
+    <h2>Settings</h2>
+
+    <label>DuckDB database file</label>
+    <div class="row" style="margin-top:0">
+      <input id="dbInput" placeholder="leave empty for built-in sample data" style="flex:1">
+      <button class="secondary" id="browseBtn">Browse…</button>
+    </div>
+    <div id="fileBrowser" class="browser hidden"></div>
+
+    <label>Claude / LLM integration</label>
+    <select id="providerSelect">
+      <option value="auto">Auto (Claude CLI → Ollama → mock)</option>
+      <option value="claude">Claude CLI (uses your existing `claude` login)</option>
+      <option value="ollama">Ollama (local)</option>
+      <option value="mock">Mock (no LLM — escalates everything to human queue)</option>
+    </select>
+    <div class="muted" style="margin-top:8px" id="llmStatus"></div>
+
+    <div class="row" style="margin-top:16px">
+      <button id="saveSettings">Save</button>
+      <button class="secondary" id="closeSettings">Cancel</button>
+      <span class="muted" id="settingsMsg" style="align-self:center"></span>
+    </div>
+  </div>
+</div>
+
 <script>
 const $ = id => document.getElementById(id);
-const api = (path, opts) => fetch(path, opts).then(r => r.json());
+const api = (path, opts) => fetch(path, opts).then(async r => {
+  const data = await r.json().catch(() => ({}));
+  if (!r.ok) throw new Error(data.detail || r.statusText);
+  return data;
+});
+const post = (path, body) => api(path, { method: 'POST',
+  headers: {'Content-Type': 'application/json'}, body: JSON.stringify(body) });
+
+function esc(s) {
+  return String(s).replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;');
+}
 
 let rolesData = {};
 
 async function init() {
   rolesData = await api('/api/roles');
   const sel = $('roleSelect'), auditSel = $('auditRole');
-  for (const [name, cfg] of Object.entries(rolesData)) {
+  for (const name of Object.keys(rolesData)) {
     sel.add(new Option(name, name));
     auditSel.add(new Option(name, name));
   }
   sel.onchange = loadPolicy;
   await loadPolicy();
-  await refreshQueue();
+  await loadSchema();
+  await refreshLlmHint();
+  refreshQueue();
   setInterval(refreshQueue, 5000);
 }
 
@@ -158,75 +229,102 @@ async function loadPolicy() {
     + JSON.stringify(data.ethics_rules, null, 2);
 }
 
-function esc(s) {
-  return String(s).replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;');
+async function refreshLlmHint() {
+  try {
+    const cfg = await api('/api/config');
+    const s = cfg.llm_status;
+    $('llmHint').textContent = s.active === 'mock'
+      ? '⚠ no LLM connected — open Settings'
+      : `agent: ${s.active}`;
+  } catch (e) {}
 }
 
-function renderTable(columns, rows) {
-  let h = '<table><tr>' + columns.map(c => `<th>${esc(c)}</th>`).join('') + '</tr>';
+/* ----------------------------- database explorer ----------------------- */
+
+async function loadSchema() {
+  try {
+    const data = await api('/api/schema');
+    $('dbPath').textContent = (data.is_sample ? 'sample data — ' : '') + data.path;
+    $('tableList').innerHTML = data.tables.map(t => `
+      <div class="tbl" id="tbl-${esc(t.name)}">
+        <div class="tbl-head" onclick="toggleTable('${esc(t.name)}')">
+          <b>${esc(t.name)}</b>
+          ${t.columns.some(c => c.pii) ? '<span class="pii-chip">PII</span>' : ''}
+          <span class="cnt">${t.row_count ?? '?'} rows</span>
+        </div>
+        <div class="cols">
+          ${t.columns.map(c => `
+            <div class="col-row">${esc(c.name)}
+              ${c.pii ? `<span class="pii-chip">${esc(c.pii)}</span>` : ''}
+              <span class="ctype">${esc(c.type)}</span>
+            </div>`).join('')}
+          <button class="secondary" style="margin-top:6px;padding:4px 10px;font-size:11px"
+                  onclick="previewTable('${esc(t.name)}')">Preview (masked)</button>
+        </div>
+      </div>`).join('');
+  } catch (e) {
+    $('dbPath').textContent = '';
+    $('tableList').innerHTML = `<span style="color:var(--red)">${esc(e.message)}</span>
+      <div class="muted" style="margin-top:6px">Open Settings to pick a valid .duckdb file.</div>`;
+  }
+}
+
+function toggleTable(name) { $('tbl-' + name).classList.toggle('open'); }
+
+async function previewTable(name) {
+  const data = await api('/api/preview/' + encodeURIComponent(name));
+  let h = `<h2>Preview: ${esc(name)} <span class="muted">(PII masked)</span></h2>`;
+  h += renderTable(data.columns, data.rows, Object.keys(data.pii_columns));
+  $('previewArea').innerHTML = h;
+}
+
+/* --------------------------------- ask --------------------------------- */
+
+function renderTable(columns, rows, piiCols = []) {
+  let h = '<table><tr>' + columns.map(c =>
+    `<th class="${piiCols.includes(c) ? 'pii' : ''}">${esc(c)}${piiCols.includes(c) ? ' 🔒' : ''}</th>`).join('') + '</tr>';
   for (const r of rows.slice(0, 200))
     h += '<tr>' + r.map(v => `<td>${esc(v ?? '')}</td>`).join('') + '</tr>';
   return h + '</table>';
 }
 
 function renderResult(res) {
-  const area = $('resultArea');
-  let cls = res.decision === 'allowed' ? 'allowed' : res.decision === 'pending' ? 'pending' : 'denied';
-  let h = `<span class="decision ${cls}">${esc(res.decision.toUpperCase())}</span>`;
+  const cls = res.decision === 'allowed' ? 'allowed'
+            : res.decision === 'pending' ? 'pending' : 'denied';
+  let h = `<span class="decision ${cls}">${esc((res.decision || 'error').toUpperCase())}</span>`;
   if (res.confidence !== undefined)
-    h += ` <span class="muted">confidence ${Number(res.confidence).toFixed(2)} · decided by ${esc(res.decided_by || 'engine')}</span>`;
+    h += ` <span class="muted">confidence ${Number(res.confidence).toFixed(2)} · decided by ${esc(res.decided_by || 'engine')}${res.attempts > 1 ? ` · ${res.attempts} attempts` : ''}</span>`;
   for (const r of res.reasoning || []) h += `<div class="reason">• ${esc(r)}</div>`;
-  if (res.suggested_rewrite) {
-    h += `<div class="reason" style="margin-top:6px">Suggested safer rewrite:</div>
-          <pre>${esc(res.suggested_rewrite)}</pre>
-          <button class="secondary" onclick="useRewrite()">Use rewrite</button>`;
-    window._rewrite = res.suggested_rewrite;
-  }
   if (res.decision === 'pending')
     h += `<div class="reason">Request #${res.queue_id} is waiting for human approval (top bar).</div>`;
   if (res.rows) {
-    h += `<div class="muted" style="margin-top:8px">${res.row_count} row(s)</div>`;
-    h += renderTable(res.columns, res.rows);
+    h += `<div class="muted" style="margin-top:8px">${res.row_count} row(s)${(res.masked_columns || []).length ? ' · masked: ' + res.masked_columns.join(', ') : ''}</div>`;
+    h += renderTable(res.columns, res.rows, res.masked_columns || []);
   }
-  area.innerHTML = h;
+  $('resultArea').innerHTML = h;
 
-  const tr = $('triggeredRules');
-  tr.innerHTML = (res.triggered_rules || []).length
-    ? '<div class="muted" style="margin-top:10px">Rules triggered by last query:</div>'
+  $('triggeredRules').innerHTML = (res.triggered_rules || []).length
+    ? '<div class="muted" style="margin-top:10px">Rules triggered:</div>'
       + res.triggered_rules.map(r => `<span class="rule-chip">${esc(r)}</span>`).join('')
     : '';
 }
 
-function useRewrite() { $('sqlInput').value = window._rewrite; }
-
-$('submitBtn').onclick = async () => {
-  $('resultArea').innerHTML = '<span class="muted">Evaluating…</span>';
-  const res = await api('/api/query', {
-    method: 'POST', headers: {'Content-Type': 'application/json'},
-    body: JSON.stringify({ role: $('roleSelect').value, sql: $('sqlInput').value })
-  });
-  renderResult(res);
+$('askBtn').onclick = async () => {
+  const q = $('questionInput').value.trim();
+  if (!q) return;
+  $('askBtn').disabled = true;
+  $('resultArea').innerHTML = '<span class="spin">Asking the agent — generating a compliant query…</span>';
+  try {
+    const res = await post('/api/ask', { role: $('roleSelect').value, question: q });
+    renderResult(res);
+  } catch (e) {
+    $('resultArea').innerHTML = `<span style="color:var(--red)">${esc(e.message)}</span>`;
+  }
+  $('askBtn').disabled = false;
   refreshQueue(); refreshAudit();
 };
 
-$('nlBtn').onclick = async () => {
-  const q = $('nlInput').value.trim();
-  if (!q) return;
-  $('nlBtn').textContent = '…';
-  const res = await api('/api/generate_sql', {
-    method: 'POST', headers: {'Content-Type': 'application/json'},
-    body: JSON.stringify({ question: q })
-  });
-  $('nlBtn').textContent = 'Generate SQL';
-  $('sqlInput').value = res.sql;
-  if (res.note) alert(res.note);
-};
-
-document.querySelectorAll('.examples a').forEach(a => a.onclick = () => {
-  $('roleSelect').value = a.dataset.role;
-  loadPolicy();
-  $('sqlInput').value = a.dataset.sql;
-});
+/* ------------------------------- queue --------------------------------- */
 
 async function refreshQueue() {
   const items = await api('/api/queue');
@@ -248,13 +346,13 @@ async function refreshQueue() {
 }
 
 async function decide(id, approve) {
-  const res = await api(`/api/queue/${id}/decision`, {
-    method: 'POST', headers: {'Content-Type': 'application/json'},
-    body: JSON.stringify({ approve, rewritten_sql: $(`rw${id}`).value })
-  });
+  const res = await post(`/api/queue/${id}/decision`,
+                         { approve, rewritten_sql: $(`rw${id}`).value });
   renderResult(res);
   refreshQueue(); refreshAudit();
 }
+
+/* ------------------------------- audit --------------------------------- */
 
 async function refreshAudit() {
   const params = new URLSearchParams();
@@ -269,6 +367,65 @@ async function refreshAudit() {
                     (i.duration_ms ?? 0).toFixed(0)]));
 }
 
+/* ------------------------------ settings ------------------------------- */
+
+async function openSettings() {
+  const cfg = await api('/api/config');
+  $('dbInput').value = cfg.database_path || '';
+  $('providerSelect').value = cfg.llm_provider;
+  const s = cfg.llm_status;
+  $('llmStatus').innerHTML =
+    `<span class="status-dot ${s.claude_cli ? 'ok' : 'bad'}"></span>Claude CLI ${s.claude_cli ? 'found — uses your existing login' : 'not found on PATH (install Claude Code and run `claude` once to log in)'}<br>` +
+    `<span class="status-dot ${s.ollama ? 'ok' : 'bad'}"></span>Ollama ${s.ollama ? 'reachable' : 'not reachable'}<br>` +
+    `Active provider: <b>${s.active}</b>`;
+  $('settingsMsg').textContent = '';
+  $('fileBrowser').classList.add('hidden');
+  $('overlay').classList.add('show');
+}
+
+async function browseTo(path) {
+  try {
+    const data = await api('/api/browse' + (path ? '?path=' + encodeURIComponent(path) : ''));
+    const fb = $('fileBrowser');
+    fb.classList.remove('hidden');
+    let h = `<div class="muted" style="cursor:default">${esc(data.path)}</div>`;
+    if (data.parent && data.parent !== data.path)
+      h += `<div class="dir" onclick="browseTo('${esc(data.parent)}')">⬑ ..</div>`;
+    h += data.dirs.map(d => `<div class="dir" onclick="browseTo('${esc(data.path)}/${esc(d)}')">📁 ${esc(d)}</div>`).join('');
+    h += data.files.map(f => `<div class="dbfile" onclick="pickFile('${esc(data.path)}/${esc(f)}')">🦆 ${esc(f)}</div>`).join('');
+    if (!data.dirs.length && !data.files.length) h += '<div class="muted">empty</div>';
+    fb.innerHTML = h;
+  } catch (e) {
+    $('settingsMsg').textContent = e.message;
+  }
+}
+
+function pickFile(path) {
+  $('dbInput').value = path.replace(/\/+/g, '/');
+  $('fileBrowser').classList.add('hidden');
+}
+
+$('browseBtn').onclick = () => browseTo($('dbInput').value
+  ? $('dbInput').value.replace(/\/[^/]*$/, '') : null);
+
+$('saveSettings').onclick = async () => {
+  $('settingsMsg').textContent = 'Saving…';
+  try {
+    await post('/api/config', {
+      database_path: $('dbInput').value.trim(),
+      llm_provider: $('providerSelect').value,
+    });
+    $('overlay').classList.remove('show');
+    await loadSchema();
+    await refreshLlmHint();
+    $('previewArea').innerHTML = '';
+  } catch (e) {
+    $('settingsMsg').textContent = e.message;
+  }
+};
+
+$('settingsBtn').onclick = openSettings;
+$('closeSettings').onclick = () => $('overlay').classList.remove('show');
 $('queueToggle').onclick = () => $('queuePanel').classList.toggle('hidden');
 $('auditToggle').onclick = () => { $('auditPanel').classList.toggle('hidden'); refreshAudit(); };
 $('policyToggle').onclick = () => $('policyPanel').classList.toggle('hidden');
