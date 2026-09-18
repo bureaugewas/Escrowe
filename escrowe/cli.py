@@ -345,7 +345,6 @@ def _readline_prompt(markup: str) -> str:
 def _repl(conn, idle_minutes: float = IDLE_MINUTES, prompt: str = None) -> str:
     """DuckDB-style prompt. Returns 'quit' or 'idle'."""
     last: Result | None = None
-    pending_feed = False
     last_activity = time.time()
     label = prompt or NAME
     console.print(f"type a question, or \\sql …   (\\help for more, \\q to quit)")
@@ -369,22 +368,26 @@ def _repl(conn, idle_minutes: float = IDLE_MINUTES, prompt: str = None) -> str:
                               "\\audit            recent decisions\n"
                               "\\export <file>    last result → .csv / .parquet / .json\n"
                               "\\json             last result as JSON\n"
-                              "\\feed             [experimental] feed the last result to the agent, once, for your next question\n"
+                              "\\feed <question>  [experimental] ask about the last result's own data (no schema, no new query)\n"
                               "\\llmsetup         restart the LLM setup (browser login or API key), from scratch\n"
                               "\\database         disconnect and choose a different database, from scratch\n"
                               "\\q                quit")
-            elif line == "\\feed":
+            elif line == "\\feed" or line.startswith("\\feed "):
+                feed_question = line[len("\\feed"):].strip()
                 if not last:
                     console.print("[yellow]nothing to feed yet - run a question first.[/]")
+                elif not feed_question:
+                    console.print("[yellow]usage: \\feed <question about the last result>[/]")
                 elif typer.confirm(
-                        "[experimental] \\feed sends the last result's actual rows to the "
-                        "LLM as context for your very next question only. Escrowe normally "
-                        "never lets the agent see row data, only the schema - you're about "
-                        "to expose data. Are you sure?", default=False):
-                    pending_feed = True
-                    console.print("[yellow]armed[/] - your next question is answered from the "
-                                  "previous result's rows alone (no schema, no new query). "
-                                  "Type \\feed again before any later question.")
+                        "[experimental] \\feed sends the last result's own question, SQL, and "
+                        "rows to the LLM as context for this question. Escrowe normally never "
+                        "lets the agent see row data, only the schema - you're about to expose "
+                        "data. Are you sure?", default=False):
+                    feed_data = _feed_text(last)
+                    with _status("thinking…") as st:
+                        res = conn.ask(feed_question, on_status=lambda t: st and st.update(t + "…"),
+                                       feed_data=feed_data)
+                    last = _show(res) or last
             elif line == "\\llmsetup":
                 if not hasattr(conn, "svc"):
                     console.print("[yellow]Only available with --local; this session is against a server.[/]")
@@ -414,11 +417,8 @@ def _repl(conn, idle_minutes: float = IDLE_MINUTES, prompt: str = None) -> str:
             elif line.startswith("\\sql "):
                 last = _show(conn.sql(line[5:])) or last
             else:
-                feed_data = _feed_text(last) if pending_feed and last else None
-                pending_feed = False              # one-shot: used or not, it doesn't carry forward
                 with _status("thinking…") as st:
-                    res = conn.ask(line, on_status=lambda t: st and st.update(t + "…"),
-                                   feed_data=feed_data)
+                    res = conn.ask(line, on_status=lambda t: st and st.update(t + "…"))
                 last = _show(res) or last
         except EscroweDenied as e:
             console.print(f"[red]DENIED[/] {e}")
@@ -437,14 +437,21 @@ FEED_MAX_CHARS = 4000
 
 
 def _feed_text(res: Result) -> str | None:
-    """Render the last result compactly for \\feed - capped so a big result
-    can't silently blow up the prompt (or the bill). Agent.analyze() adds the
-    "question is about these results" lead-in; this is just the data itself."""
+    """Render the last result for \\feed: the original question, the SQL that
+    answered it, and the rows - capped so a big result can't silently blow up
+    the prompt (or the bill). Agent.analyze() adds the "question is about
+    these results" lead-in around this."""
     if res.answer and not res.columns:
         return None                      # nothing but prose from the schema; nothing to feed
+    parts = []
+    if res.question:
+        parts.append(f"original question: {res.question}")
+    if res.sql:
+        parts.append(f"sql: {res.sql}")
     header = ", ".join(res.columns)
     lines = [", ".join("" if v is None else str(v) for v in r) for r in res.rows[:FEED_MAX_ROWS]]
-    text = f"columns: {header}\n" + "\n".join(lines)
+    parts.append(f"columns: {header}\n" + "\n".join(lines))
+    text = "\n".join(parts)
     if res.row_count > FEED_MAX_ROWS:
         text += f"\n... ({res.row_count - FEED_MAX_ROWS} more rows not shown)"
     return text[:FEED_MAX_CHARS]
