@@ -103,6 +103,7 @@ def interactive() -> None:
     tables = len({c.fqn for c in engine.catalog()}) if engine else 0
     console.print(f"[dim]{svc.source().name} ({svc.source().kind}) · {tables} tables · "
                   f"claude: {'ready' if claude_ok else 'not connected'}[/]")
+    _table_overview(conn.metadata()["tables"])
     _repl(conn, idle_minutes=IDLE_MINUTES)
 
 
@@ -398,6 +399,7 @@ def _repl(conn, idle_minutes: float = IDLE_MINUTES, prompt: str = None) -> str:
                     if existing:
                         conn.detach(existing.name)
                     _first_run_database(conn)
+                    _table_overview(conn.metadata()["tables"])
             elif line == "\\meta":
                 console.print(conn.metadata()["text"])
             elif line == "\\audit":
@@ -452,6 +454,36 @@ def _feed_text(res: Result) -> str | None:
     if res.row_count > FEED_MAX_ROWS:
         text += f"\n... ({res.row_count - FEED_MAX_ROWS} more rows not shown)"
     return text[:FEED_MAX_CHARS]
+
+
+OVERVIEW_MAX_TABLES = 20
+OVERVIEW_COMMENT_CHARS = 100
+
+
+def _table_overview(tables: list[dict], limit: int = OVERVIEW_MAX_TABLES) -> None:
+    """A quick orientation right after connecting - what's actually in here -
+    without scrolling a 445-table warehouse past the prompt. Documented tables
+    first (someone bothered to describe them, so they're probably the ones
+    that matter), then the biggest undocumented ones, capped at `limit`."""
+    if not tables:
+        return
+    documented = [t for t in tables if t.get("comment")]
+    rest = [t for t in tables if not t.get("comment")]
+    documented.sort(key=lambda t: t.get("approx_rows") or 0, reverse=True)
+    rest.sort(key=lambda t: t.get("approx_rows") or 0, reverse=True)
+    shown = (documented + rest)[:limit]
+    if not shown:
+        return
+    console.print(f"\n[dim]a quick look ({len(shown)} of {len(tables)} tables):[/]")
+    for t in shown:
+        rows = f" [dim](~{t['approx_rows']:,} rows)[/]" if t.get("approx_rows") else ""
+        console.print(f"  [bold]{t['table']}[/]{rows}")
+        if t.get("comment"):
+            comment = t["comment"][:OVERVIEW_COMMENT_CHARS]
+            console.print(f"    [dim]{comment}[/]")
+    if len(tables) > limit:
+        console.print(f"  [dim]… {len(tables) - limit} more - \\meta for the full schema[/]")
+    console.print()
 
 
 def _show(res: Result, max_rows: int = 200) -> Result:
