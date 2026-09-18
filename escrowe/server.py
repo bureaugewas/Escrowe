@@ -91,7 +91,10 @@ def create_app(escrowe: Escrowe | None = None) -> FastAPI:
     @app.get("/metadata")
     def metadata(p: Principal = Depends(principal)):
         from .metadata import Metadata
-        tables = svc.catalog_for(p)
+        try:
+            tables = svc.catalog_for(p)
+        except AuthError as e:
+            raise HTTPException(401, str(e))
         if tables is None:
             return {"tables": [], "text": ""}
         return {"tables": [t.to_dict() for t in tables], "text": Metadata.render(tables)}
@@ -100,6 +103,8 @@ def create_app(escrowe: Escrowe | None = None) -> FastAPI:
     def run_sql(body: SqlBody, p: Principal = Depends(principal), format: str = Query("json")):
         try:
             return _result(svc.sql(p, body.sql), format)
+        except AuthError as e:
+            raise HTTPException(401, str(e))
         except Denied as e:
             raise HTTPException(403, str(e))
         except EngineError as e:
@@ -109,6 +114,8 @@ def create_app(escrowe: Escrowe | None = None) -> FastAPI:
     def ask(body: AskBody, p: Principal = Depends(principal), format: str = Query("json")):
         try:
             return _result(svc.ask(p, body.question), format)
+        except AuthError as e:
+            raise HTTPException(401, str(e))
         except Denied as e:
             raise HTTPException(403, str(e),
                                 headers={"X-Escrowe-Needs-Login": "1"} if getattr(e, "needs_login", False) else None)

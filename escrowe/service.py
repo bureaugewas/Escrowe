@@ -248,8 +248,19 @@ class Escrowe:
         return Principal(user=user)
 
     def engine_for(self, principal: Principal):
-        s = self.sessions.get(principal.session or "")
-        return s.engine if s is not None else self.engine
+        """A principal with no session at all is the local CLI's own operator
+        mode (never logged in separately) - that's the main engine, correctly.
+        A principal that DOES carry a session id but it's gone from
+        self.sessions means a real login token whose session was revoked
+        (/logout) or reaped (expired) - that must fail, not silently fall
+        back to the main engine, which would run the request as a different,
+        possibly more privileged, identity than the one that was logged out."""
+        if principal.session is None:
+            return self.engine
+        s = self.sessions.get(principal.session)
+        if s is None:
+            raise AuthError("Session has ended; log in again.")
+        return s.engine
 
     def catalog_for(self, principal: Principal) -> list[TableMeta] | None:
         """The schema snapshot taken once when this principal's engine was
