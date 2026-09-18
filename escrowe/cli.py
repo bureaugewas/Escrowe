@@ -46,6 +46,36 @@ SESSION_FILE = Path(os.environ.get("ESCROWE_HOME", Path.home() / ".escrowe")).ex
 IDLE_MINUTES = float(os.environ.get("ESCROWE_IDLE_MINUTES", "30"))
 BLUE = "#6cb6ff"                       # the escrowe light blue
 NAME = f"[bold {BLUE}]Escrowe[/]"
+LLM_STYLE = "#8fc4ff"                  # dimmer than NAME's blue - text, not a heading
+LLM_INDENT = "  "
+
+
+class _StreamPrinter:
+    """Prints the agent's reply as it streams in - own color, indented, so it's
+    never confused with escrowe's own output. Tracks whether anything was
+    printed at all, so the caller can skip reprinting the same text afterward."""
+
+    def __init__(self):
+        self.printed = False
+        self._at_line_start = True
+
+    def __call__(self, chunk: str) -> None:
+        if not chunk:
+            return
+        self.printed = True
+        out = []
+        for ch in chunk:
+            if self._at_line_start:
+                out.append(LLM_INDENT)
+                self._at_line_start = False
+            out.append(ch)
+            if ch == "\n":
+                self._at_line_start = True
+        console.print("".join(out), end="", style=LLM_STYLE, markup=False, highlight=False)
+
+    def close(self) -> None:
+        if self.printed:
+            console.print()          # end the streamed line before whatever prints next
 
 
 @app.callback(invoke_without_command=True)
@@ -382,10 +412,13 @@ def _repl(conn, idle_minutes: float = IDLE_MINUTES, prompt: str = None) -> str:
                 elif typer.confirm(
                         "Are you sure you want to feed query results back to the LLM?", default=False):
                     feed_data = _feed_text(last)
+                    console.print()
+                    stream = _StreamPrinter()
                     with _status("thinking…") as st:
                         res = conn.ask(feed_question, on_status=lambda t: st and st.update(t + "…"),
-                                       feed_data=feed_data)
-                    last = _show(res) or last
+                                       feed_data=feed_data, on_token=stream)
+                    stream.close()
+                    last = _show(res, streamed=stream.printed) or last
             elif line == "\\llmsetup":
                 if not hasattr(conn, "svc"):
                     console.print("[yellow]Only available with --local; this session is against a server.[/]")
@@ -416,9 +449,12 @@ def _repl(conn, idle_minutes: float = IDLE_MINUTES, prompt: str = None) -> str:
             elif line.startswith("\\sql "):
                 last = _show(conn.sql(line[5:])) or last
             else:
+                console.print()
+                stream = _StreamPrinter()
                 with _status("thinking…") as st:
-                    res = conn.ask(line, on_status=lambda t: st and st.update(t + "…"))
-                last = _show(res) or last
+                    res = conn.ask(line, on_status=lambda t: st and st.update(t + "…"), on_token=stream)
+                stream.close()
+                last = _show(res, streamed=stream.printed) or last
         except EscroweDenied as e:
             console.print(f"[red]DENIED[/] {e}")
             if getattr(e, "needs_login", False) and sys.stdin.isatty():
@@ -486,10 +522,13 @@ def _table_overview(tables: list[dict], limit: int = OVERVIEW_MAX_TABLES) -> Non
     console.print()
 
 
-def _show(res: Result, max_rows: int = 200) -> Result:
+def _show(res: Result, max_rows: int = 200, streamed: bool = False) -> Result:
+    """`streamed` means the text (answer or note) already printed live via
+    _StreamPrinter as it arrived - so it isn't repeated here verbatim."""
     if res.answer:
         # The agent replied from the schema. Nothing was queried, so there is nothing to table.
-        console.print(res.answer)
+        if not streamed:
+            console.print(res.answer, style=LLM_STYLE, markup=False, highlight=False)
         console.print(f"[dim]from the schema · audit #{res.audit_id}[/]")
         return res
     console.print(f"[dim]sql:[/] {res.sql}")
@@ -503,6 +542,8 @@ def _show(res: Result, max_rows: int = 200) -> Result:
     if res.attempts > 1:
         tail += f" · {res.attempts} attempts"
     console.print(f"[dim]{tail}[/]")
+    if res.note and not streamed:
+        console.print(f"{LLM_INDENT}{res.note}", style=LLM_STYLE, markup=False, highlight=False)
     return res
 
 

@@ -82,6 +82,7 @@ class QueryResult:
     audit_id: int
     attempts: int = 1
     provider: str | None = None
+    note: str | None = None  # a short caveat the agent added after finalizing this query
 
     def to_dict(self, max_rows: int | None = None) -> dict:
         t = self.table if max_rows is None else self.table.slice(0, max_rows)
@@ -89,7 +90,7 @@ class QueryResult:
             "decision": "allowed", "sql": self.sql, "columns": self.table.column_names,
             "rows": [list(r.values()) for r in t.to_pylist()], "row_count": self.table.num_rows,
             "duration_ms": round(self.duration_ms, 1), "audit_id": self.audit_id,
-            "attempts": self.attempts, "provider": self.provider,
+            "attempts": self.attempts, "provider": self.provider, "note": self.note,
         }
 
 
@@ -293,7 +294,7 @@ class Escrowe:
         del h[:-self.HISTORY_MAX_TURNS]
 
     def ask(self, principal: Principal, question: str, on_status=None,
-            feed_data: str | None = None) -> QueryResult:
+            feed_data: str | None = None, on_token=None) -> QueryResult:
         """Text -> agent -> SQL -> engine -> rows to the caller.
         The agent sees the schema, shape feedback, and this session's own history
         (earlier questions/SQL/shape - never rows); it never sees `result.table` -
@@ -311,7 +312,7 @@ class Escrowe:
                 on_status("thinking")
             proposal = self.agent.analyze(question, feed_data,
                                           context={"user": principal.user, "session": session_id},
-                                          history=history)
+                                          history=history, on_token=on_token)
             aid = self.store.audit(user=principal.user, mode="feed", question=question,
                                    decision="answered" if proposal.answer else "refused",
                                    reason=(proposal.answer or proposal.refusal or "")[:500], attempts=1)
@@ -332,7 +333,7 @@ class Escrowe:
                 on_status("thinking")
             proposal = self.agent.propose(question, schema_text, attempts,
                                           context={"user": principal.user, "session": session_id},
-                                          history=history)
+                                          history=history, on_token=on_token)
             if proposal.answer:
                 aid = self.store.audit(user=principal.user, mode="ask", question=question,
                                        decision="answered", reason=proposal.answer[:500], attempts=n)
@@ -360,6 +361,7 @@ class Escrowe:
                 # more turn to decide whether to finalize, refine, or probe again.
                 attempts.append(Attempt(proposal.sql, feedback=_shape_feedback(result.table)))
                 continue
+            result.note = proposal.note
             self._remember(session_id, HistoryTurn(question=question, sql=result.sql,
                                                    shape=_shape_feedback(result.table)))
             return result

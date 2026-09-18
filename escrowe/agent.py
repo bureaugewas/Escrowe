@@ -43,6 +43,11 @@ turn to fix the query, probe again, or finalize it (same query, no `-- probe` li
 probe when you actually need to check something; a query you're confident in should finalize
 immediately, in one turn.
 
+After a finalized query's closing fence, you may add one short plain-text line if there's a
+real caveat worth flagging - an assumption you made, what the query excludes, why a result
+might look surprising. Leave nothing after the fence when there isn't; don't pad every answer
+with a note for its own sake.
+
 Otherwise reply in plain words: to explain what is here, what a column means, how tables
 relate, what they could ask, or just to say hello. Do that whenever the answer is not itself
 a query, including when the schema cannot answer them - say briefly what is missing.
@@ -83,9 +88,24 @@ class AgentResult:
     refusal: str | None = None
     answer: str | None = None        # prose, when the question was about the data not for it
     probe: bool = False              # this SQL is exploratory: shape feedback only, one more turn
+    note: str | None = None          # a short caveat about a finalized query, shown after the table
     provider: str = "mock"
     attempts: list[Attempt] = field(default_factory=list)
     needs_login: bool = False        # the caller can offer to fix this on the spot
+
+
+_WORD = re.compile(r"\S+\s*")
+REVEAL_DELAY_S = 0.008
+
+
+def _reveal(text: str, on_token) -> None:
+    """claude -p returns its whole reply at once; this fakes the readable
+    trickle of real streaming by revealing it word by word instead of
+    dumping it as one block. Not real token streaming - just fast enough
+    (~8ms/word) not to feel slow, which is the part that was actually asked for."""
+    for m in _WORD.finditer(text):
+        on_token(m.group())
+        time.sleep(REVEAL_DELAY_S)
 
 
 def _claude_cli_error(message: str, binary: str) -> str:
@@ -116,12 +136,13 @@ def _strip_probe(sql: str) -> tuple[str, bool]:
 
 
 def _parse_reply(text: str | None) -> dict:
-    """Turn a model reply into {"sql": ..., "probe": ...} or {"answer": ...}.
+    """Turn a model reply into {"sql": ..., "probe": ..., "note": ...} or {"answer": ...}.
 
     A query need not arrive as JSON, which models get wrong often enough to
-    matter. A fenced ```sql block is the query; a reply that is itself just a
-    SELECT/WITH is the query; legacy JSON is still understood; anything else is
-    prose shown to the person as-is.
+    matter. A fenced ```sql block is the query, and any text after its closing
+    fence is an optional one-line note (see SYSTEM); a reply that is itself
+    just a SELECT/WITH is the query, with no room for a note; legacy JSON is
+    still understood; anything else is prose shown to the person as-is.
     """
     if not text:
         return {"answer": ""}
@@ -131,7 +152,8 @@ def _parse_reply(text: str | None) -> dict:
     if obj is not None:
         if obj.get("sql"):
             sql, probe = _strip_probe(str(obj["sql"]))
-            return {"sql": sql, "probe": probe}
+            note = str(obj["note"]).strip() if obj.get("note") else None
+            return {"sql": sql, "probe": probe, "note": note}
         if obj.get("answer"):
             return {"answer": str(obj["answer"]).strip()}
         if obj.get("refusal"):
@@ -141,7 +163,8 @@ def _parse_reply(text: str | None) -> dict:
     if m:
         candidate, probe = _strip_probe(m.group(1))
         if _SQL_START.match(candidate):
-            return {"sql": candidate, "probe": probe}
+            note = text[m.end():].strip() or None
+            return {"sql": candidate, "probe": probe, "note": note}
     candidate, probe = _strip_probe(text)
     if _SQL_START.match(candidate) and candidate.rstrip().rstrip(";").count(";") == 0:
         return {"sql": candidate, "probe": probe}
@@ -218,22 +241,30 @@ class Agent:
         return {"provider": self.provider, "model": self.model, **llm_login.status(self.store)}
 
     # ------------------------------------------------------------ providers
-    def _ask(self, system: str, user: str) -> str | None:
-        """Sets self.last_error to something a person can act on when it fails."""
+    def _ask(self, system: str, user: str, on_token=None) -> str | None:
+        """Sets self.last_error to something a person can act on when it fails.
+
+        `on_token`, if given, is called with successive text chunks that
+        concatenate to the full reply - real incremental streaming on the
+        anthropic (API key) provider, a fast simulated reveal on claude-cli
+        (which only ever returns the complete text at once, from its own
+        structured JSON output - real streaming there would mean losing that
+        structure, which is what makes billing/auth errors reliably detectable).
+        """
         self.last_error = None
         self.needs_login = False
         self.last_thinking = None
         try:
             if self.provider == "anthropic":
-                return self._ask_anthropic(system, user)
+                return self._ask_anthropic(system, user, on_token)
             if self.provider == "claude-cli":
-                return self._ask_cli(system + "\n\n" + user)
-            return self._ask_mock(system, user)
+                return self._ask_cli(system + "\n\n" + user, on_token)
+            return self._ask_mock(system, user, on_token)
         except Exception as e:                       # never let a provider crash a query
             self.last_error = f"{type(e).__name__}: {str(e).splitlines()[0][:200]}"
             return None
 
-    def _ask_anthropic(self, system: str, user: str) -> str | None:
+    def _ask_anthropic(self, system: str, user: str, on_token=None) -> str | None:
         import anthropic
         if self._client is None:
             self._client = anthropic.Anthropic(api_key=self.api_key) if self.api_key else anthropic.Anthropic()
@@ -246,11 +277,22 @@ class Agent:
         if self.thinking_budget > 0:
             kwargs["thinking"] = {"type": "enabled", "budget_tokens": self.thinking_budget}
             kwargs["max_tokens"] = max(kwargs["max_tokens"], self.thinking_budget + 1024)
-        resp = self._client.messages.create(**kwargs)
-        self.last_thinking = "".join(b.thinking for b in resp.content if b.type == "thinking") or None
-        if resp.stop_reason == "refusal":
+        if on_token is None:
+            resp = self._client.messages.create(**kwargs)
+            self.last_thinking = "".join(b.thinking for b in resp.content if b.type == "thinking") or None
+            if resp.stop_reason == "refusal":
+                return json.dumps({"refusal": "The model declined to answer this question."})
+            return "".join(b.text for b in resp.content if b.type == "text")
+        with self._client.messages.stream(**kwargs) as stream:
+            parts = []
+            for chunk in stream.text_stream:            # real, incremental - as the model writes it
+                parts.append(chunk)
+                on_token(chunk)
+            final = stream.get_final_message()
+        self.last_thinking = "".join(b.thinking for b in final.content if b.type == "thinking") or None
+        if final.stop_reason == "refusal":
             return json.dumps({"refusal": "The model declined to answer this question."})
-        return "".join(b.text for b in resp.content if b.type == "text")
+        return "".join(parts)
 
     def _fail(self, message: str) -> None:
         """A message prefixed __login__ means a credential, not the question, is wrong."""
@@ -259,7 +301,7 @@ class Agent:
         else:
             self.last_error = message
 
-    def _ask_cli(self, prompt: str) -> str | None:
+    def _ask_cli(self, prompt: str, on_token=None) -> str | None:
         binary = os.environ.get("CLAUDE_BIN", "claude")
         try:
             proc = subprocess.run([binary, "-p", prompt, "--output-format", "json"],
@@ -286,9 +328,12 @@ class Agent:
         if payload is None:
             self.last_error = f"'{binary}' returned output that is not JSON."
             return None
-        return payload.get("result")
+        result = payload.get("result")
+        if on_token and result:
+            _reveal(result, on_token)      # claude -p only ever returns the full text at once
+        return result
 
-    def _ask_mock(self, system: str, user: str) -> str | None:
+    def _ask_mock(self, system: str, user: str, on_token=None) -> str | None:
         """Offline stand-in: count a table, or describe the schema when asked about it."""
         tables = re.findall(r"^TABLE (\S+)", system, re.M)
         if not tables:
@@ -296,13 +341,17 @@ class Agent:
         q = user.lower()
         if not any(t.split(".")[-1] in q for t in tables) and \
                 any(w in q for w in ("hello", "hi", "what", "which", "how do", "help", "tell me")):
-            return json.dumps({"answer": "You can see: " + ", ".join(t.split(".")[-1] for t in tables) + "."})
+            text = "You can see: " + ", ".join(t.split(".")[-1] for t in tables) + "."
+            if on_token:
+                on_token(text)
+            return json.dumps({"answer": text})
         chosen = next((t for t in tables if t.split(".")[-1] in q), tables[0])
         return json.dumps({"sql": f"SELECT count(*) AS n FROM {chosen}"})
 
     # ---------------------------------------------------------------- loop
     def propose(self, question: str, schema_text: str, attempts: list[Attempt],
-                context: dict | None = None, history: list[HistoryTurn] | None = None) -> AgentResult:
+                context: dict | None = None, history: list[HistoryTurn] | None = None,
+                on_token=None) -> AgentResult:
         self.context = {**(context or {}), "question": question, "attempt": len(attempts) + 1}
         system = SYSTEM.replace("{schema}", schema_text)
         user = _render_history(history) + f"QUESTION: {question}"
@@ -314,7 +363,7 @@ class Agent:
         started = time.time()
         raw, failure = None, None
         try:
-            raw = self._ask(system, user)
+            raw = self._ask(system, user, on_token=on_token)
         except Exception as e:                 # a provider that raises is still a prompt that was sent
             failure = f"{type(e).__name__}: {str(e).splitlines()[0][:200]}"
             raise
@@ -342,11 +391,11 @@ class Agent:
         parsed = _parse_reply(raw)
         if parsed.get("sql"):
             return AgentResult(sql=parsed["sql"].rstrip(";").strip(), probe=parsed.get("probe", False),
-                               provider=self.provider)
+                               note=parsed.get("note"), provider=self.provider)
         return AgentResult(sql=None, answer=parsed.get("answer", ""), provider=self.provider)
 
     def analyze(self, question: str, feed_data: str, context: dict | None = None,
-                history: list[HistoryTurn] | None = None) -> AgentResult:
+                history: list[HistoryTurn] | None = None, on_token=None) -> AgentResult:
         """\\feed's own path: a follow-up question about a result already in hand, not
         a request to write a new query. No schema is sent - there is nothing to query,
         only the rows already fetched - which keeps this cheap and keeps the schema out
@@ -361,7 +410,7 @@ class Agent:
         started = time.time()
         raw, failure = None, None
         try:
-            raw = self._ask(system, user)
+            raw = self._ask(system, user, on_token=on_token)
         except Exception as e:
             failure = f"{type(e).__name__}: {str(e).splitlines()[0][:200]}"
             raise

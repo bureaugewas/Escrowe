@@ -52,19 +52,21 @@ class Result:
     provider: str | None = None
     question: str | None = None
     answer: str | None = None        # set when the agent replied in words, not SQL
+    note: str | None = None          # a short caveat the agent added after finalizing this query
 
     @classmethod
     def from_dict(cls, d: dict, question: str | None = None) -> "Result":
         return cls(sql=d.get("sql"), columns=d["columns"], rows=d["rows"], row_count=d["row_count"],
                    answer=d.get("answer"), duration_ms=d.get("duration_ms", 0.0),
                    audit_id=d.get("audit_id"), attempts=d.get("attempts", 1), provider=d.get("provider"),
-                   question=question)
+                   question=question, note=d.get("note"))
 
     def to_dict(self) -> dict:
         return {"question": self.question, "answer": self.answer, "sql": self.sql,
                 "columns": self.columns, "rows": self.rows,
                 "row_count": self.row_count, "duration_ms": self.duration_ms,
-                "audit_id": self.audit_id, "attempts": self.attempts, "provider": self.provider}
+                "audit_id": self.audit_id, "attempts": self.attempts, "provider": self.provider,
+                "note": self.note}
 
     def to_json(self) -> str:
         return json.dumps(self.to_dict(), default=str)
@@ -226,9 +228,9 @@ class LocalConnection:
         except EngineError as e:
             raise EscroweError(str(e))
 
-    def ask(self, question: str, on_status=None, feed_data: str | None = None) -> Result:
+    def ask(self, question: str, on_status=None, feed_data: str | None = None, on_token=None) -> Result:
         return self._run(self.svc.ask, self._p(), question, question=question,
-                         on_status=on_status, feed_data=feed_data)
+                         on_status=on_status, feed_data=feed_data, on_token=on_token)
 
     def sql(self, sql: str) -> Result:
         return self._run(self.svc.sql, self._p(), sql)
