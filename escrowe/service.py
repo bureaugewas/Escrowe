@@ -327,11 +327,19 @@ class Escrowe:
             if on_status:
                 on_status("running the query")
             try:
-                return self.sql(principal, proposal.sql, mode="ask", question=question, attempts=n,
-                                provider=proposal.provider, allow_write=False)
+                result = self.sql(principal, proposal.sql, mode="ask", question=question, attempts=n,
+                                  provider=proposal.provider, allow_write=False)
             except (Denied, EngineError) as e:
                 last_error = e
                 attempts.append(Attempt(proposal.sql, feedback=str(e)))   # shape feedback only
+                continue
+            if proposal.probe and n < self.settings.agent_attempts:
+                # The agent asked to check this one before trusting it: it gets the shape
+                # (row count, which columns came back all-NULL), never the rows, and one
+                # more turn to decide whether to finalize, refine, or probe again.
+                attempts.append(Attempt(proposal.sql, feedback=_shape_feedback(result.table)))
+                continue
+            return result
         raise Denied(f"No acceptable query after {self.settings.agent_attempts} attempts. Last: {last_error}")
 
     def _audit(self, p: Principal, mode, question, sql, compiled_sql, decision, reason, rows, start, attempts) -> int:
@@ -343,3 +351,17 @@ class Escrowe:
 def _clean_engine_error(e: Exception) -> str:
     msg = str(e).split("\n")[0]
     return msg[:300]
+
+
+def _shape_feedback(table: pa.Table) -> str:
+    """Counts only, never values - what a probe gets back. Free: Arrow already
+    knows null_count per column from the rows it just fetched, no extra query."""
+    n = table.num_rows
+    if n == 0:
+        return "0 rows returned."
+    nulls = [f"{name}: {table.column(name).null_count}/{n} null"
+            for name in table.column_names if table.column(name).null_count]
+    text = f"{n} row(s) returned."
+    if nulls:
+        text += " Null counts - " + ", ".join(nulls) + "."
+    return text

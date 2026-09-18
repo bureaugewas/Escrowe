@@ -29,6 +29,20 @@ To get data, reply with one SQL query in a fenced block and nothing else:
 SELECT ...
 ```
 
+If you are unsure a query is right - checking a join key, a filter, or which of two tables
+has the rows you want - mark it as a probe by putting `-- probe` as the query's first line:
+
+```sql
+-- probe
+SELECT ...
+```
+
+A probe still runs for real, but you get back only its shape: how many rows, and which
+columns (if any) came back entirely NULL - never the rows themselves. You then get one more
+turn to fix the query, probe again, or finalize it (same query, no `-- probe` line). Only
+probe when you actually need to check something; a query you're confident in should finalize
+immediately, in one turn.
+
 Otherwise reply in plain words: to explain what is here, what a column means, how tables
 relate, what they could ask, or just to say hello. Do that whenever the answer is not itself
 a query, including when the schema cannot answer them - say briefly what is missing.
@@ -53,6 +67,7 @@ class AgentResult:
     sql: str | None
     refusal: str | None = None
     answer: str | None = None        # prose, when the question was about the data not for it
+    probe: bool = False              # this SQL is exploratory: shape feedback only, one more turn
     provider: str = "mock"
     attempts: list[Attempt] = field(default_factory=list)
     needs_login: bool = False        # the caller can offer to fix this on the spot
@@ -74,10 +89,19 @@ def _claude_cli_error(message: str, binary: str) -> str:
 
 _SQL_START = re.compile(r"^\s*(WITH|SELECT)\b", re.I)
 _FENCE = re.compile(r"```(?:sql)?\s*(.+?)```", re.I | re.S)
+_PROBE_LINE = re.compile(r"^\s*--\s*probe\b[^\n]*\n?", re.I)
+
+
+def _strip_probe(sql: str) -> tuple[str, bool]:
+    """A leading `-- probe` comment marks a query as exploratory (see SYSTEM):
+    it still runs for real, but the caller gets back only its shape, never the
+    rows. Stripped here so the marker never reaches the database."""
+    m = _PROBE_LINE.match(sql)
+    return (sql[m.end():].strip(), True) if m else (sql.strip(), False)
 
 
 def _parse_reply(text: str | None) -> dict:
-    """Turn a model reply into {"sql": ...} or {"answer": ...}.
+    """Turn a model reply into {"sql": ..., "probe": ...} or {"answer": ...}.
 
     A query need not arrive as JSON, which models get wrong often enough to
     matter. A fenced ```sql block is the query; a reply that is itself just a
@@ -91,17 +115,21 @@ def _parse_reply(text: str | None) -> dict:
     obj = _try_json(text)
     if obj is not None:
         if obj.get("sql"):
-            return {"sql": str(obj["sql"]).strip()}
+            sql, probe = _strip_probe(str(obj["sql"]))
+            return {"sql": sql, "probe": probe}
         if obj.get("answer"):
             return {"answer": str(obj["answer"]).strip()}
         if obj.get("refusal"):
             return {"answer": str(obj["refusal"]).strip()}
 
     m = _FENCE.search(text)
-    if m and _SQL_START.match(m.group(1)):
-        return {"sql": m.group(1).strip()}
-    if _SQL_START.match(text) and text.rstrip().rstrip(";").count(";") == 0:
-        return {"sql": text.strip()}
+    if m:
+        candidate, probe = _strip_probe(m.group(1))
+        if _SQL_START.match(candidate):
+            return {"sql": candidate, "probe": probe}
+    candidate, probe = _strip_probe(text)
+    if _SQL_START.match(candidate) and candidate.rstrip().rstrip(";").count(";") == 0:
+        return {"sql": candidate, "probe": probe}
     return {"answer": text}
 
 
@@ -240,8 +268,10 @@ class Agent:
         system = SYSTEM.replace("{schema}", schema_text)
         user = f"QUESTION: {question}"
         if attempts:
-            hist = "\n".join(f"- attempt {i+1}: {a.sql}\n  feedback: {a.feedback}" for i, a in enumerate(attempts))
-            user += f"\n\nPrevious attempts were not accepted. Fix the query.\n{hist}"
+            hist = "\n".join(f"- attempt {i+1}: {a.sql}\n  result: {a.feedback}" for i, a in enumerate(attempts))
+            user += (f"\n\nPrevious attempts:\n{hist}\n\n"
+                    "If one failed, fix it. If a probe's shape looks right, finalize it (same "
+                    "query, no `-- probe` line). Otherwise refine it and probe again if needed.")
         started = time.time()
         raw, failure = None, None
         try:
@@ -272,7 +302,8 @@ class Agent:
                                needs_login=self.needs_login)
         parsed = _parse_reply(raw)
         if parsed.get("sql"):
-            return AgentResult(sql=parsed["sql"].rstrip(";").strip(), provider=self.provider)
+            return AgentResult(sql=parsed["sql"].rstrip(";").strip(), probe=parsed.get("probe", False),
+                               provider=self.provider)
         return AgentResult(sql=None, answer=parsed.get("answer", ""), provider=self.provider)
 
     def analyze(self, question: str, feed_data: str, context: dict | None = None) -> AgentResult:
