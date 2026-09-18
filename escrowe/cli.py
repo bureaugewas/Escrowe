@@ -379,10 +379,7 @@ def _repl(conn, idle_minutes: float = IDLE_MINUTES, prompt: str = None) -> str:
                 elif not feed_question:
                     console.print("[yellow]usage: \\feed <question about the last result>[/]")
                 elif typer.confirm(
-                        "[experimental] \\feed sends the last result's own question, SQL, and "
-                        "rows to the LLM as context for this question. Escrowe normally never "
-                        "lets the agent see row data, only the schema - you're about to expose "
-                        "data. Are you sure?", default=False):
+                        "Are you sure you want to feed query results back to the LLM?", default=False):
                     feed_data = _feed_text(last)
                     with _status("thinking…") as st:
                         res = conn.ask(feed_question, on_status=lambda t: st and st.update(t + "…"),
