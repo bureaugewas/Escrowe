@@ -46,8 +46,14 @@ SESSION_FILE = Path(os.environ.get("ESCROWE_HOME", Path.home() / ".escrowe")).ex
 IDLE_MINUTES = float(os.environ.get("ESCROWE_IDLE_MINUTES", "30"))
 BLUE = "#6cb6ff"                       # the escrowe light blue
 NAME = f"[bold {BLUE}]Escrowe[/]"
-LLM_STYLE = "#8fc4ff"                  # dimmer than NAME's blue - text, not a heading
+LLM_STYLE = "#b7c6d9"                  # light grey-blue - readable body text, not a heading
 LLM_INDENT = "  "
+
+
+def _indent_lines(text: str) -> str:
+    """Prefix every line with LLM_INDENT - used for a non-streamed fallback
+    print, so it looks the same as if it had streamed in line by line."""
+    return "\n".join(LLM_INDENT + line for line in text.split("\n"))
 
 
 class _StreamPrinter:
@@ -528,7 +534,7 @@ def _show(res: Result, max_rows: int = 200, streamed: bool = False) -> Result:
     if res.answer:
         # The agent replied from the schema. Nothing was queried, so there is nothing to table.
         if not streamed:
-            console.print(res.answer, style=LLM_STYLE, markup=False, highlight=False)
+            console.print(_indent_lines(res.answer), style=LLM_STYLE, markup=False, highlight=False)
         console.print(f"[dim]from the schema · audit #{res.audit_id}[/]")
         return res
     console.print(f"[dim]sql:[/] {res.sql}")
@@ -543,7 +549,7 @@ def _show(res: Result, max_rows: int = 200, streamed: bool = False) -> Result:
         tail += f" · {res.attempts} attempts"
     console.print(f"[dim]{tail}[/]")
     if res.note and not streamed:
-        console.print(f"{LLM_INDENT}{res.note}", style=LLM_STYLE, markup=False, highlight=False)
+        console.print(_indent_lines(res.note), style=LLM_STYLE, markup=False, highlight=False)
     return res
 
 
