@@ -1,0 +1,335 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Escrowe</title>
+<link rel="icon" href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 32 32'%3E%3Crect width='32' height='32' rx='7' fill='%234c9aff'/%3E%3Cpath d='M11 10h10M11 16h7M11 22h10' stroke='%23fff' stroke-width='2.6' stroke-linecap='round'/%3E%3C/svg%3E">
+<style>
+  :root{--bg:#0e1116;--panel:#161b22;--panel2:#11151b;--line:#262d36;--text:#d7dee8;--dim:#8b97a6;
+        --accent:#6cb6ff;--ok:#3fcf8e;--bad:#ff6b6b;--warn:#ffb347;--radius:10px}
+  @media (prefers-color-scheme:light){:root:not([data-theme="dark"]){--bg:#f6f8fa;--panel:#fff;--panel2:#f0f3f6;
+        --line:#d8dee4;--text:#1f2933;--dim:#5c6b7a;--accent:#0b62d6}}
+  *{box-sizing:border-box}
+  body{margin:0;background:var(--bg);color:var(--text);font:14px/1.5 -apple-system,"Segoe UI",Roboto,sans-serif}
+  button{background:var(--accent);color:#fff;border:0;padding:8px 14px;border-radius:8px;cursor:pointer;
+         font-weight:600;font-size:13px}
+  button.ghost{background:transparent;color:var(--text);border:1px solid var(--line)}
+  button:disabled{opacity:.5;cursor:default}
+  input,select,textarea{width:100%;background:var(--panel2);color:var(--text);border:1px solid var(--line);
+         border-radius:8px;padding:9px 10px;font:inherit}
+  textarea{resize:vertical;min-height:74px}
+  label{display:block;margin:10px 0 4px;color:var(--dim);font-size:12px}
+  .panel{background:var(--panel);border:1px solid var(--line);border-radius:var(--radius);padding:16px}
+  .row{display:flex;gap:8px;flex-wrap:wrap;align-items:center}
+  .grid2{display:grid;grid-template-columns:1fr 1fr;gap:0 12px}
+  .dim{color:var(--dim);font-size:12px}
+  .hide{display:none!important}
+  /* login */
+  #gate{min-height:100vh;display:flex;align-items:center;justify-content:center;padding:24px}
+  #gate .panel{width:380px}
+  h1{font-size:20px;margin:0 0 2px}
+  /* app */
+  header{display:flex;gap:12px;align-items:center;padding:10px 16px;background:var(--panel);
+         border-bottom:1px solid var(--line);position:sticky;top:0;z-index:5;flex-wrap:wrap}
+  header b{font-size:15px}
+  .chip{background:var(--panel2);border:1px solid var(--line);border-radius:20px;padding:3px 11px;font-size:12px}
+  .spacer{flex:1}
+  main{display:grid;grid-template-columns:290px 1fr;gap:14px;padding:14px 16px;align-items:start}
+  @media (max-width:860px){main{grid-template-columns:1fr}}
+  .tbl{border-bottom:1px solid var(--line);padding:7px 0}
+  .tbl summary{cursor:pointer;list-style:none;display:flex;gap:6px;align-items:center;font-weight:600}
+  .tbl summary::-webkit-details-marker{display:none}
+  .tbl summary:before{content:"▸";color:var(--dim);transition:.15s}
+  .tbl[open] summary:before{transform:rotate(90deg)}
+  .col{display:flex;gap:6px;padding:2px 0 2px 16px;font-size:12px;color:var(--dim)}
+  .col .t{margin-left:auto;font-size:10px;opacity:.7}
+  table{border-collapse:collapse;width:100%;margin-top:10px;font-size:12.5px;display:block;overflow:auto;max-height:52vh}
+  th,td{border:1px solid var(--line);padding:5px 9px;text-align:left;white-space:nowrap}
+  th{background:var(--panel2);color:var(--dim);position:sticky;top:0}
+  pre{background:var(--panel2);border:1px solid var(--line);border-radius:8px;padding:10px;
+      overflow:auto;font-size:12px;white-space:pre-wrap;margin:8px 0 0}
+  .banner{border-radius:8px;padding:9px 12px;margin-top:10px;font-size:13px}
+  .banner.bad{background:rgba(255,107,107,.12);color:var(--bad)}
+  .banner.ok{background:rgba(63,207,142,.12);color:var(--ok)}
+  .banner.warn{background:rgba(255,179,71,.12);color:var(--warn)}
+  .tabs{display:flex;gap:4px;margin-bottom:10px;flex-wrap:wrap}
+  .tabs button{background:transparent;color:var(--dim);border:1px solid transparent;padding:6px 12px}
+  .tabs button.on{background:var(--panel2);color:var(--text);border-color:var(--line)}
+  #overlay{position:fixed;inset:0;background:rgba(0,0,0,.55);display:flex;align-items:flex-start;
+           justify-content:center;padding:40px 16px;z-index:10;overflow:auto}
+  #overlay .panel{width:560px}
+  .spin:after{content:"";display:inline-block;width:11px;height:11px;border:2px solid var(--dim);
+              border-top-color:transparent;border-radius:50%;animation:s .7s linear infinite;vertical-align:-1px}
+  @keyframes s{to{transform:rotate(360deg)}}
+</style>
+</head>
+<body>
+
+<!-- ------------------------------------------------------------ login -->
+<div id="gate">
+  <div class="panel">
+    <h1>Escrowe</h1>
+    <div class="dim">A blind-agent query gateway. Log in with your database account.</div>
+    <form id="loginForm">
+      <label>User</label><input id="lu" autocomplete="username" autofocus>
+      <label>Password</label><input id="lp" type="password" autocomplete="current-password">
+      <div class="row" style="margin-top:14px"><button id="loginBtn" style="flex:1">Log in</button></div>
+    </form>
+    <div id="loginMsg"></div>
+    <div class="dim" id="gateInfo" style="margin-top:12px"></div>
+  </div>
+</div>
+
+<!-- -------------------------------------------------------------- app -->
+<div id="app" class="hide">
+  <header>
+    <b>Escrowe</b>
+    <span class="chip" id="whoami"></span>
+    <span class="spacer"></span>
+    <span class="dim" id="idle"></span>
+    <button class="ghost" id="connBtn">Connect database</button>
+    <button class="ghost" id="auditBtn">Audit</button>
+    <button class="ghost" id="outBtn">Log out</button>
+  </header>
+
+  <main>
+    <section class="panel">
+      <div class="row"><b style="font-size:13px">What the agent sees</b>
+        <span class="spacer"></span><button class="ghost" id="refreshMeta" style="padding:3px 9px">↻</button></div>
+      <div class="dim" style="margin:4px 0 8px">Names, types and comments - never a value.</div>
+      <div id="schema"></div>
+    </section>
+
+    <section class="panel">
+      <div class="tabs">
+        <button class="on" data-mode="ask">Ask a question</button>
+        <button data-mode="sql">Write SQL</button>
+      </div>
+      <textarea id="q" placeholder="e.g. revenue per product category this year"></textarea>
+      <div class="row" style="margin-top:10px">
+        <button id="runBtn">Run</button>
+        <span class="dim">⌘/Ctrl + Enter</span>
+        <span class="spacer"></span>
+        <button class="ghost hide" id="csvBtn">Download CSV</button>
+      </div>
+      <div id="out"></div>
+    </section>
+  </main>
+</div>
+
+<!-- ---------------------------------------------------------- modals -->
+<div id="overlay" class="hide"><div class="panel" id="modal"></div></div>
+
+<script>
+const $=id=>document.getElementById(id), esc=s=>String(s??"").replace(/[&<>"]/g,c=>({"&":"&amp;","<":"&lt;",">":"&gt;",'"':"&quot;"}[c]));
+let S={token:null,user:null,mode:"ask",last:null,idleAt:0};
+const IDLE_MS=30*60*1000;
+
+async function api(path,{method="GET",body,auth=true}={}){
+  const h={"Content-Type":"application/json"};
+  if(auth&&S.token) h.Authorization="Bearer "+S.token;
+  const r=await fetch(path,{method,headers:h,body:body?JSON.stringify(body):undefined});
+  const d=await r.json().catch(()=>({}));
+  if(!r.ok) throw Object.assign(new Error(d.detail||r.statusText),{status:r.status});
+  return d;
+}
+const touch=()=>{S.idleAt=Date.now()+IDLE_MS};
+
+/* ------------------------------------------------------------- login */
+$("loginForm").onsubmit=async e=>{
+  e.preventDefault(); const b=$("loginBtn"); b.disabled=true; $("loginMsg").innerHTML="";
+  try{
+    const d=await api("/login",{method:"POST",auth:false,
+      body:{user:$("lu").value.trim(),password:$("lp").value}});
+    S={...S,token:d.token,user:d.sub};
+    $("lp").value=""; start();
+  }catch(err){ $("loginMsg").innerHTML=`<div class="banner bad">${esc(err.message)}</div>`; }
+  b.disabled=false;
+};
+
+async function gateInfo(){
+  try{ const h=await api("/health",{auth:false});
+    $("gateInfo").innerHTML=`database: <b>${esc(h.source?.name||"none yet")}</b>`
+      +(h.source?` (${esc(h.source.kind)})`:"")+` · agent: ${esc(h.agent?.provider)}`;
+  }catch{}
+}
+
+/* --------------------------------------------------------------- app */
+async function start(){
+  $("gate").classList.add("hide"); $("app").classList.remove("hide"); touch();
+  $("whoami").textContent=S.user;
+  await loadSchema();
+  const h=await api("/health",{auth:false});
+  if(!h.source) openConnect();
+}
+
+async function loadSchema(){
+  try{
+    const d=await api("/metadata");
+    $("schema").innerHTML=d.tables.length? d.tables.map(t=>`
+      <details class="tbl"><summary>${esc(t.table.split(".").pop())}
+        <span class="col-count dim" style="margin-left:auto;font-weight:400">${t.approx_rows??"?"} rows</span></summary>
+        <div class="dim" style="padding:4px 0 4px 16px">${esc(t.table)}${t.comment?" - "+esc(t.comment):""}</div>
+        ${t.columns.map(c=>`<div class="col"><span>${esc(c.name)}</span>
+          ${c.comment?`<span title="${esc(c.comment)}">ⓘ</span>`:""}
+          <span class="t">${esc(c.type)}</span></div>`).join("")}
+      </details>`).join("")
+      : `<div class="dim">Nothing to see yet - connect a database.</div>`;
+  }catch(e){ $("schema").innerHTML=`<div class="banner bad">${esc(e.message)}</div>`; }
+}
+$("refreshMeta").onclick=loadSchema;
+
+document.querySelectorAll(".tabs button").forEach(b=>b.onclick=()=>{
+  document.querySelectorAll(".tabs button").forEach(x=>x.classList.remove("on"));
+  b.classList.add("on"); S.mode=b.dataset.mode;
+  $("q").placeholder=S.mode==="ask"?"e.g. revenue per product category this year"
+                                   :"SELECT region, count(*) FROM orders GROUP BY 1";
+});
+
+$("q").onkeydown=e=>{ if((e.metaKey||e.ctrlKey)&&e.key==="Enter") $("runBtn").click(); };
+
+$("runBtn").onclick=async()=>{
+  const text=$("q").value.trim(); if(!text) return;
+  touch(); $("runBtn").disabled=true; $("csvBtn").classList.add("hide");
+  $("out").innerHTML=`<div class="dim" style="margin-top:12px">${S.mode==="ask"?"the agent is writing a query":"running"} <span class="spin"></span></div>`;
+  try{
+    const body=S.mode==="ask"?{question:text}:{sql:text};
+    S.last=await api(S.mode==="ask"?"/ask":"/sql",{method:"POST",body});
+    render(S.last); $("csvBtn").classList.remove("hide");
+  }catch(err){
+    const kind=err.status===403?"Not allowed":err.status===401?"Session ended":"Error";
+    $("out").innerHTML=`<div class="banner bad"><b>${kind}.</b> ${esc(err.message)}</div>`;
+    if(err.status===401) setTimeout(logout,1200);
+  }
+  $("runBtn").disabled=false;
+};
+
+function render(r){
+  if(r.answer!==null && r.answer!==undefined && !r.sql){
+    $("out").innerHTML=`<div class="dim" style="margin-top:12px">from the schema</div><pre>${esc(r.answer)}</pre>`
+      +`<div class="dim" style="margin-top:8px">audit #${r.audit_id}</div>`;
+    return;
+  }
+  const notes=[]; if(r.attempts>1) notes.push(`${r.attempts} attempts`);
+  $("out").innerHTML=
+    (S.mode==="ask"?`<div class="dim" style="margin-top:12px">the agent wrote</div><pre>${esc(r.sql)}</pre>`:"")
+    + `<table><thead><tr>${r.columns.map(c=>`<th>${esc(c)}</th>`).join("")}</tr></thead><tbody>`
+    + r.rows.slice(0,500).map(row=>`<tr>${row.map(v=>`<td>${esc(v)}</td>`).join("")}</tr>`).join("")
+    + `</tbody></table><div class="dim" style="margin-top:8px">${r.row_count} row(s) · ${r.duration_ms} ms · audit #${r.audit_id}${notes.length?" · "+esc(notes.join(" · ")):""}</div>`;
+}
+
+$("csvBtn").onclick=()=>{
+  const r=S.last, q=v=>`"${String(v??"").replace(/"/g,'""')}"`;
+  const blob=new Blob([[r.columns.map(q).join(","),...r.rows.map(x=>x.map(q).join(","))].join("\n")],{type:"text/csv"});
+  const a=document.createElement("a"); a.href=URL.createObjectURL(blob); a.download="escrowe.csv"; a.click();
+};
+
+/* ----------------------------------------------------------- connect */
+function dbFields(p,port){return `<div class="grid2">
+    <div><label>Host</label><input id="${p}host" value="127.0.0.1"></div>
+    <div><label>Port</label><input id="${p}port" value="${port||""}"></div></div>
+  <div class="grid2">
+    <div><label>User</label><input id="${p}user"></div>
+    <div><label>Password</label><input id="${p}pass" type="password"></div></div>
+  <label>Database</label><input id="${p}db">`;}
+
+function openConnect(){
+  openModal(`<h1 style="font-size:16px;margin:0 0 4px">Connect a database</h1>
+    <div class="dim">Escrowe connects with this account directly. Its own grants decide what the agent - and you - can do.</div>
+    <div class="tabs" style="margin-top:12px">
+      <button class="on" data-c="form">Fill in details</button><button data-c="dsn">Paste a connection string</button></div>
+    <div id="cForm">
+      <label>Type</label>
+      <select id="kind"><option value="mysql">MySQL</option></select>
+      <label>Name in SQL</label><input id="sname" value="mysql">
+      <div id="kindFields"></div>
+    </div>
+    <div id="cDsn" class="hide">
+      <label>Connection string</label>
+      <input id="dsn" placeholder="mysql://user:pw@host:3306/shop">
+      <label>Name in SQL <span class="dim"> - optional</span></label><input id="dsnName" placeholder="mysql">
+    </div>
+    <div class="row" style="margin-top:14px"><button id="cGo">Connect</button>
+      <button class="ghost" onclick="closeModal()">Close</button></div>
+    <div id="cMsg"></div>
+    <div id="cList" style="margin-top:16px"></div>`);
+
+  const paint=()=>{ $("kindFields").innerHTML=dbFields("d",3306); $("sname").value=$("kind").value; };
+  paint(); $("kind").onchange=paint;
+  document.querySelectorAll("#modal .tabs button").forEach(b=>b.onclick=()=>{
+    document.querySelectorAll("#modal .tabs button").forEach(x=>x.classList.remove("on")); b.classList.add("on");
+    $("cForm").classList.toggle("hide",b.dataset.c!=="form"); $("cDsn").classList.toggle("hide",b.dataset.c!=="dsn"); });
+  $("cGo").onclick=submitConnect; listSources();
+}
+
+function collect(){
+  if(!$("cDsn").classList.contains("hide"))
+    return {dsn:$("dsn").value.trim(), name:$("dsnName").value.trim()||null};
+  const kind=$("kind").value, name=$("sname").value.trim(), v=id=>($(id)?.value||"").trim();
+  const o={host:v("dhost"),user:v("duser"),password:v("dpass"),database:v("ddb")};
+  if(v("dport")) o.port=+v("dport");
+  const params=Object.fromEntries(Object.entries(o).filter(([,x])=>x!==""&&x!==undefined));
+  return {name,kind,params};
+}
+
+async function submitConnect(){
+  $("cGo").disabled=true; $("cMsg").innerHTML=`<div class="dim" style="margin-top:10px">connecting <span class="spin"></span></div>`;
+  try{
+    const d=await api("/sources",{method:"POST",body:collect()});
+    $("cMsg").innerHTML=`<div class="banner ok"><b>Connected ${esc(d.name)}</b> - ${d.tables.length} tables.</div>`;
+    await listSources(); await loadSchema();
+  }catch(e){ $("cMsg").innerHTML=`<div class="banner bad">${esc(e.message)}</div>`; }
+  $("cGo").disabled=false;
+}
+
+async function listSources(){
+  try{
+    const d=await api("/sources");
+    $("cList").innerHTML=`<div class="dim">Connected</div>`+(d.sources.length?d.sources.map(s=>
+      `<div class="row" style="padding:6px 0;border-top:1px solid var(--line)">
+        <b>${esc(s.name)}</b><span class="chip">${esc(s.kind)}</span>
+        <span class="spacer"></span>
+        <button class="ghost" onclick="detach('${esc(s.name)}')" style="padding:3px 9px">Remove</button></div>`).join("")
+      : `<div class="dim">nothing yet</div>`);
+  }catch(e){ $("cList").innerHTML=`<div class="dim">${esc(e.message)}</div>`; }
+}
+async function detach(n){ await api("/sources/"+encodeURIComponent(n),{method:"DELETE"}); listSources(); loadSchema(); }
+
+/* ------------------------------------------------------------- audit */
+async function openAudit(){
+  openModal(`<h1 style="font-size:16px;margin:0 0 10px">Audit</h1><div id="aList" class="dim">loading…</div>
+    <div class="row" style="margin-top:12px"><button class="ghost" onclick="closeModal()">Close</button></div>`);
+  const d=await api("/audit?limit=40");
+  $("aList").innerHTML=`<table><thead><tr><th>when</th><th>who</th><th>what</th><th>decision</th><th>query</th></tr></thead><tbody>`
+    +d.rows.map(r=>`<tr><td>${esc((r.ts||"").slice(11,19))}</td><td>${esc(r.user)}</td>
+      <td>${esc(r.mode)}</td>
+      <td style="color:${r.decision==="allowed"?"var(--ok)":r.decision==="denied"?"var(--bad)":"var(--warn)"}">${esc(r.decision)}</td>
+      <td>${esc((r.candidate_sql||r.question||"").slice(0,70))}</td></tr>`).join("")+`</tbody></table>`;
+}
+
+/* ------------------------------------------------------- shell utils */
+function openModal(html){ $("modal").innerHTML=html; $("overlay").classList.remove("hide"); }
+function closeModal(){ $("overlay").classList.add("hide"); }
+$("overlay").onclick=e=>{ if(e.target.id==="overlay") closeModal(); };
+$("connBtn").onclick=openConnect; $("auditBtn").onclick=openAudit; $("outBtn").onclick=()=>logout();
+
+async function logout(){
+  try{ await api("/logout",{method:"POST"}); }catch{}
+  S={token:null,user:null,mode:S.mode,last:null,idleAt:0};
+  closeModal(); $("app").classList.add("hide"); $("gate").classList.remove("hide"); gateInfo(); $("lu").focus();
+}
+
+// The server's session outlives this, but an unattended browser should not.
+setInterval(()=>{
+  if(!S.token) return;
+  const left=S.idleAt-Date.now();
+  if(left<=0){ logout().then(()=>$("loginMsg").innerHTML=`<div class="banner warn">Logged out after 30 minutes idle.</div>`); }
+  else $("idle").textContent=left<5*60*1000?`idle logout in ${Math.ceil(left/60000)} min`:"";
+},5000);
+["click","keydown"].forEach(ev=>document.addEventListener(ev,touch));
+
+gateInfo(); $("lu").focus();
+</script>
+</body>
+</html>

@@ -4,3 +4,4 @@ data.duckdb
 audit.duckdb
 *.duckdb.wal
 config.yaml
+.DS_store

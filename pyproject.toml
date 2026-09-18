@@ -1,0 +1,39 @@
+[build-system]
+requires = ["setuptools>=68"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "escrowe"
+version = "0.1.0"
+description = "A blind-agent query gateway: connect an LLM to your database directly, with a real account, so it can write SQL against your schema and never see a row of the data."
+readme = "README.md"
+requires-python = ">=3.10"
+license = {text = "MIT"}
+dependencies = [
+  "sqlglot>=27",
+  "pyarrow>=17",
+  "fastapi>=0.110",
+  "uvicorn[standard]>=0.29",
+  "pydantic>=2",
+  "httpx>=0.27",
+  "typer>=0.12",
+  "rich>=13",
+  "anthropic>=1.0",
+  "pymysql>=1.1",
+  "duckdb>=1.4",          # engines/ducklake.py: DuckDB is DuckLake's own client library
+]
+
+[project.optional-dependencies]
+dev = ["pytest>=8"]
+
+[project.scripts]
+escrowe = "escrowe.cli:app"
+
+[tool.setuptools.packages.find]
+include = ["escrowe*"]
+
+[tool.setuptools.package-data]
+escrowe = ["static/*"]
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]
