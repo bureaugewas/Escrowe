@@ -129,8 +129,8 @@ def _first_run_database(conn: LocalConnection) -> None:
         # typer vendors its own click internals here and only auto-shows choices for its
         # private TyperChoice type, not a real click.Choice - so the options are spelled
         # out in the prompt text itself rather than relying on that (silently broken) display.
-        kind = typer.prompt(f"Database system ({', '.join(KINDS)})",
-                            type=click.Choice(list(KINDS)), default=KINDS[0])
+        kind = typer.prompt(f"Database system [{'/'.join(KINDS)}]",
+                            type=click.Choice(list(KINDS)), default=KINDS[0], show_default=False)
         name, params = _ask_connection(kind)
         try:
             with _status("connecting"):
@@ -716,8 +716,8 @@ def attach(dsn: str = typer.Argument(None, help="Connection string, e.g. mysql:/
             raise typer.Exit(1)
         name, kind, params = src.name, src.kind, src.params
     else:
-        kind = typer.prompt(f"Database system ({', '.join(KINDS)})",
-                            type=click.Choice(list(KINDS)), default=KINDS[0])
+        kind = typer.prompt(f"Database system [{'/'.join(KINDS)}]",
+                            type=click.Choice(list(KINDS)), default=KINDS[0], show_default=False)
         name = name or typer.prompt("Name for this source (used as the database name in SQL)", default=kind)
         params = _db_prompts()
     try:
