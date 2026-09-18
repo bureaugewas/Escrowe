@@ -30,7 +30,6 @@ try:
 except ImportError:
     pass  # not available on Windows without pyreadline3
 
-import click
 import typer
 from rich.console import Console
 from rich.table import Table
@@ -160,15 +159,25 @@ def _login_saved_connection(conn: LocalConnection) -> bool:
     return False
 
 
+def _prompt_choice(text: str, choices: list[str], default: str) -> str:
+    """A choice prompt that validates itself instead of passing a real
+    click.Choice as `type=` to typer.prompt(): this typer version vendors its
+    own copy of click's internals, and an invalid entry raises a *real*
+    click.exceptions.BadParameter that its vendored retry loop doesn't
+    recognize (it only catches its own vendored UsageError) - so instead of
+    re-prompting, it crashes. Validating here avoids that entirely."""
+    while True:
+        value = typer.prompt(text, default=default).strip()
+        if value in choices:
+            return value
+        console.print(f"[red]{value!r} is not one of: {', '.join(choices)}[/]")
+
+
 def _first_run_database(conn: LocalConnection) -> None:
     from .engines import KINDS
     console.print()
     while True:
-        # typer vendors its own click internals here and only auto-shows choices for its
-        # private TyperChoice type, not a real click.Choice - so the options are spelled
-        # out in the prompt text itself rather than relying on that (silently broken) display.
-        kind = typer.prompt(f"Database system [{'/'.join(KINDS)}]",
-                            type=click.Choice(list(KINDS)), default=KINDS[0], show_default=False)
+        kind = _prompt_choice(f"Database system [{'/'.join(KINDS)}]", list(KINDS), KINDS[0])
         name, params = _ask_connection(kind)
         try:
             with _status("connecting"):
@@ -548,8 +557,8 @@ def _show(res: Result, max_rows: int = 200, streamed: bool = False) -> Result:
     if res.attempts > 1:
         tail += f" · {res.attempts} attempts"
     console.print(f"[dim]{tail}[/]")
-    if res.note and not streamed:
-        console.print(_indent_lines(res.note), style=LLM_STYLE, markup=False, highlight=False)
+    # res.note (a caveat the agent could attach after a query) is left out of the
+    # display for now - plumbing stays in place, just not shown, on request.
     return res
 
 
@@ -819,8 +828,7 @@ def attach(dsn: str = typer.Argument(None, help="Connection string, e.g. mysql:/
             raise typer.Exit(1)
         name, kind, params = src.name, src.kind, src.params
     else:
-        kind = typer.prompt(f"Database system [{'/'.join(KINDS)}]",
-                            type=click.Choice(list(KINDS)), default=KINDS[0], show_default=False)
+        kind = _prompt_choice(f"Database system [{'/'.join(KINDS)}]", list(KINDS), KINDS[0])
         name = name or typer.prompt("Name for this source (used as the database name in SQL)", default=kind)
         params = _db_prompts()
     try:
