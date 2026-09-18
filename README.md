@@ -16,7 +16,7 @@ Escrow proves that governance-enforced local AI analytics is practical today.
 
 ## What this PoC demonstrates
 
-1. **Agent-type access control** — different agent roles get different data access, defined
+1. **Agent-type access control** — agents get data access scoped to your regular rbac roles, defined
    in a policy file. Not user-based: the *agent identity* determines access.
 
 2. **Aggregation enforcement** — some roles may see aggregated results (COUNT, AVG, SUM
