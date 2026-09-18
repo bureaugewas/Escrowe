@@ -58,7 +58,7 @@ def test_agent_result_never_contains_rows_type():
     """AgentResult must stay incapable of carrying data back from a query.
     Adding a field here is fine; adding one that could hold rows is not."""
     fields = AgentResult.__dataclass_fields__
-    assert set(fields) == {"sql", "refusal", "answer", "provider", "attempts", "needs_login"}
+    assert set(fields) == {"sql", "refusal", "answer", "probe", "provider", "attempts", "needs_login"}
     assert all(f.type in ("str | None", "str", "bool", "list[Attempt]") for f in fields.values()), \
         {n: f.type for n, f in fields.items()}
 

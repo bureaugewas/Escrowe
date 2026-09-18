@@ -18,7 +18,7 @@ from dataclasses import dataclass, field
 
 import pyarrow as pa
 
-from .agent import Agent, Attempt
+from .agent import Agent, Attempt, HistoryTurn
 from .auth import AuthError as VerifyError, build_verifier
 from .config import Settings
 from .engines import REGISTRY, EngineError, build as build_engine
@@ -128,6 +128,11 @@ class Escrowe:
             agent.transcript = self.transcript
         self.sessions: dict[str, Session] = {}
         self._session_lock = threading.Lock()
+        # Per-session conversation memory: earlier questions, their SQL, and their
+        # shape (never rows, unless \feed explicitly shared one - see ask()).
+        # Keyed by session id so a server process with several logins keeps each
+        # person's history separate.
+        self._history: dict[str, list[HistoryTurn]] = {}
 
     def _load_source(self) -> Source | None:
         rows = self.store.sources()
@@ -170,6 +175,7 @@ class Escrowe:
         self.store.clear_sources()
         if persist:
             self.store.save_source(src.name, src.kind, src.persisted_json())
+        self._history.clear()          # a different database makes old SQL/shape history stale
         tables = sorted({t.fqn for t in self._catalog_cache[id(engine)]})
         return {"name": src.name, "kind": src.kind, "tables": tables}
 
@@ -182,6 +188,7 @@ class Escrowe:
                 self._catalog_cache.pop(id(self.engine), None)
                 self.engine.close()
             self.engine, self._source = None, None
+            self._history.clear()
         self.store.delete_source(name)
 
     # ------------------------------------------------------------- identity
@@ -278,22 +285,33 @@ class Escrowe:
         aid = self._audit(principal, mode, question, sql, safe_sql, "allowed", None, table.num_rows, start, attempts)
         return QueryResult(table, sql, dur, aid, attempts, provider)
 
+    HISTORY_MAX_TURNS = 20
+
+    def _remember(self, session_id: str, turn: HistoryTurn) -> None:
+        h = self._history.setdefault(session_id, [])
+        h.append(turn)
+        del h[:-self.HISTORY_MAX_TURNS]
+
     def ask(self, principal: Principal, question: str, on_status=None,
             feed_data: str | None = None) -> QueryResult:
         """Text -> agent -> SQL -> engine -> rows to the caller.
-        The agent sees the schema and shape feedback; it never sees `result.table` -
+        The agent sees the schema, shape feedback, and this session's own history
+        (earlier questions/SQL/shape - never rows); it never sees `result.table` -
         unless `feed_data` is given (the experimental \\feed mode, warned about at the
         prompt), in which case this skips straight to Agent.analyze: a follow-up
         question about a result already in hand, answered from that data alone, no
-        schema, no new query.
+        schema, no new query. A \\feed turn's shared data is remembered from then on
+        too - the one deliberate, person-approved exception to shape-only memory.
         `on_status`, if given, is called with "thinking" while the agent is composing
         a query and "running the query" once one is about to execute."""
+        session_id = principal.session or self._operator_session_id
+        history = self._history.get(session_id, [])
         if feed_data is not None:
             if on_status:
                 on_status("thinking")
             proposal = self.agent.analyze(question, feed_data,
-                                          context={"user": principal.user,
-                                                   "session": principal.session or self._operator_session_id})
+                                          context={"user": principal.user, "session": session_id},
+                                          history=history)
             aid = self.store.audit(user=principal.user, mode="feed", question=question,
                                    decision="answered" if proposal.answer else "refused",
                                    reason=(proposal.answer or proposal.refusal or "")[:500], attempts=1)
@@ -301,6 +319,7 @@ class Escrowe:
                 refusal = Denied(proposal.refusal or "The agent could not answer from the fed data.")
                 refusal.needs_login = proposal.needs_login
                 raise refusal
+            self._remember(session_id, HistoryTurn(question=question, fed=feed_data))
             return Answer(proposal.answer, question, aid, proposal.provider, 1)
         tables = self.catalog_for(principal)
         if tables is None:
@@ -312,11 +331,13 @@ class Escrowe:
             if on_status:
                 on_status("thinking")
             proposal = self.agent.propose(question, schema_text, attempts,
-                                          context={"user": principal.user,
-                                                   "session": principal.session or self._operator_session_id})
+                                          context={"user": principal.user, "session": session_id},
+                                          history=history)
             if proposal.answer:
                 aid = self.store.audit(user=principal.user, mode="ask", question=question,
                                        decision="answered", reason=proposal.answer[:500], attempts=n)
+                self._remember(session_id, HistoryTurn(question=question,
+                                                       shape=f"answered: {proposal.answer[:300]}"))
                 return Answer(proposal.answer, question, aid, proposal.provider, n)
             if not proposal.sql:
                 self.store.audit(user=principal.user, mode="ask", question=question,
@@ -339,6 +360,8 @@ class Escrowe:
                 # more turn to decide whether to finalize, refine, or probe again.
                 attempts.append(Attempt(proposal.sql, feedback=_shape_feedback(result.table)))
                 continue
+            self._remember(session_id, HistoryTurn(question=question, sql=result.sql,
+                                                   shape=_shape_feedback(result.table)))
             return result
         raise Denied(f"No acceptable query after {self.settings.agent_attempts} attempts. Last: {last_error}")
 
