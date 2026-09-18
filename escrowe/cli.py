@@ -20,6 +20,7 @@ from __future__ import annotations
 
 import json
 import os
+import re
 import sys
 import time
 from pathlib import Path
@@ -322,6 +323,25 @@ def browser_ui(port: int = 8765) -> None:
 
 # ================================================================== the REPL
 
+_ANSI = re.compile(r"(\x1b\[[0-9;]*m)")
+
+
+def _readline_prompt(markup: str) -> str:
+    """Render rich markup to a plain `input()` prompt, with escape codes wrapped
+    in \\001/\\002 (readline's own "this is zero-width" markers).
+
+    console.input() prints the prompt itself and then calls bare input() with
+    none - so once readline is loaded (for history/arrow-key editing), it has
+    no idea the prompt exists: a history redraw returns to column 0 and reprints
+    only its own buffer, wiping out whatever was printed beside it. Passing the
+    prompt to input() directly, correctly marked up, is what readline needs to
+    redraw around it instead of over it.
+    """
+    with console.capture() as cap:
+        console.print(markup, end="")
+    return _ANSI.sub(r"\001\1\002", cap.get())
+
+
 def _repl(conn, idle_minutes: float = IDLE_MINUTES, prompt: str = None) -> str:
     """DuckDB-style prompt. Returns 'quit' or 'idle'."""
     last: Result | None = None
@@ -331,7 +351,7 @@ def _repl(conn, idle_minutes: float = IDLE_MINUTES, prompt: str = None) -> str:
     console.print(f"type a question, or \\sql …   (\\help for more, \\q to quit)")
     while True:
         try:
-            line = console.input(f"[bold]{label}[/] ").strip()
+            line = input(_readline_prompt(f"[bold]{label}[/] ")).strip()
         except (EOFError, KeyboardInterrupt):
             return "quit"
         if idle_minutes and time.time() - last_activity > idle_minutes * 60:
