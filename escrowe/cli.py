@@ -202,6 +202,9 @@ def _first_run_database(conn: LocalConnection) -> None:
 def _ask_connection(kind: str) -> tuple[str, dict]:
     if kind == "ducklake":
         return "lake", _ducklake_prompts()
+    if kind == "duckdb":
+        path = typer.prompt("File path", default=str(Path.cwd() / "database.duckdb"))
+        return "duckdb", {"path": str(Path(path).expanduser())}
     host = typer.prompt("Host", default="127.0.0.1")
     port = int(typer.prompt("Port", default=3306))
     database = typer.prompt("Database", default="", show_default=False).strip()

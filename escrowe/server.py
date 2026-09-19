@@ -105,6 +105,7 @@ def create_app(escrowe: Escrowe | None = None, local_operator: bool = False) -> 
         cached = svc.catalog_for(svc.operator_principal()) or []
         return {"ok": True, "agent": svc.agent.status(),
                 "source": src.redacted() if src else None,
+                "connected": svc.engine is not None,   # configured (source set) is not the same as connected
                 "tables": sorted({t.fqn for t in cached})}
 
     @app.post("/login")

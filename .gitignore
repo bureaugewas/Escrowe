@@ -5,3 +5,4 @@ audit.duckdb
 *.duckdb.wal
 config.yaml
 .DS_store
+*.egg-info/

@@ -143,5 +143,31 @@ class DuckLakeEngine(DirectEngine):
                     timer.cancel()
 
 
+class DuckDBEngine(DuckLakeEngine):
+    """A plain local DuckDB file - no DuckLake catalog format, no lake server,
+    just the file directly. Subclasses DuckLakeEngine purely for its catalog()/
+    table_sizes()/execute()/close(): none of those are DuckLake-specific, they
+    just read duckdb_tables()/duckdb_columns() filtered by self.alias and run
+    SQL over self.conn, which is exactly as true for a plain file. Only the
+    connect step itself differs (no ducklake extension, no ATTACH)."""
+    kind = "duckdb"
+
+    def __init__(self, path: str, **_):
+        try:
+            import duckdb
+        except ImportError as e:
+            raise EngineError("DuckDB support needs the 'duckdb' package (pip install duckdb).") from e
+        self._lock = threading.Lock()
+        try:
+            self.conn = duckdb.connect(path)
+            self.alias = self.conn.execute("SELECT current_database()").fetchone()[0]
+        except Exception as e:
+            raise EngineError(str(e).splitlines()[0][:300]) from e
+
+    @classmethod
+    def test_login(cls, **params) -> None:
+        cls(**{k: v for k, v in params.items() if k == "path"}).close()
+
+
 def _q(v: str) -> str:
     return "'" + str(v).replace("'", "''") + "'"

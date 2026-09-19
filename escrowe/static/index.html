@@ -50,6 +50,8 @@
   header .sep{width:1px;height:22px;background:var(--line);margin:0 4px}
   #nbName{width:200px;padding:5px 9px;font-weight:600}
   .chip{background:var(--panel2);border:1px solid var(--line);border-radius:20px;padding:3px 11px;font-size:12px}
+  .dot{display:inline-block;width:7px;height:7px;border-radius:50%;background:var(--dim);margin-right:6px;vertical-align:middle}
+  .dot.on{background:var(--ok)}
   .ymulti{grid-column:1/-1}
   .chips{display:flex;flex-wrap:wrap;gap:6px;margin-top:4px}
   .chip-check{display:flex;align-items:center;gap:5px;background:var(--panel2);border:1px solid var(--line);
@@ -57,6 +59,11 @@
   .chip-check input{width:auto;margin:0}
   .spacer{flex:1}
   main{display:grid;grid-template-columns:270px 1fr;gap:14px;padding:14px 16px;align-items:start}
+  .sidebarcol{display:flex;flex-direction:column;gap:14px}
+  .nbrow2{display:flex;align-items:center;gap:6px;padding:5px 6px;border-radius:8px;cursor:pointer;font-size:12.5px}
+  .nbrow2:hover{background:var(--panel2)}
+  .nbrow2.on{background:var(--panel2);color:var(--accent);font-weight:600}
+  .nbrow2 .n{overflow:hidden;text-overflow:ellipsis;white-space:nowrap;flex:1}
   main.nosb{grid-template-columns:1fr}
   @media (max-width:860px){main{grid-template-columns:1fr}}
   #sidebar{position:sticky;top:60px;max-height:calc(100vh - 80px);overflow:auto}
@@ -156,6 +163,7 @@
   <header>
     <b>Escrowe</b>
     <span class="chip edit-only" id="whoami"></span>
+    <span class="chip edit-only" id="dbStatus" title=""><span class="dot" id="dbDot"></span><span id="dbLabel">not connected</span></span>
     <span class="sep edit-only"></span>
     <input id="nbName" placeholder="untitled notebook" title="Notebook name">
     <button class="ghost sm edit-only" id="openBtn">Open</button>
@@ -173,12 +181,19 @@
   </header>
 
   <main>
-    <section class="panel" id="sidebar">
-      <div class="row"><b style="font-size:13px">What the agent sees</b>
-        <span class="spacer"></span><button class="ghost sm" id="refreshMeta">↻</button></div>
-      <div class="dim" style="margin:4px 0 8px">Names, types and comments - never a value.</div>
-      <div id="schema"></div>
-    </section>
+    <div class="sidebarcol">
+      <section class="panel" id="nbPanel">
+        <div class="row"><b style="font-size:13px">Notebooks</b>
+          <span class="spacer"></span><button class="ghost sm" id="nbNewBtn" title="Start a new notebook">+ New</button></div>
+        <div id="nbSidebarList" class="dim" style="margin-top:6px">loading…</div>
+      </section>
+      <section class="panel" id="sidebar">
+        <div class="row"><b style="font-size:13px">What the agent sees</b>
+          <span class="spacer"></span><button class="ghost sm" id="refreshMeta">↻</button></div>
+        <div class="dim" style="margin:4px 0 8px">Names, types and comments - never a value.</div>
+        <div id="schema"></div>
+      </section>
+    </div>
 
     <section>
       <div id="cells"></div>
@@ -247,9 +262,23 @@ async function start(){
   if(!S.nb.cells.length) addCell("ask",false);
   for(const c of S.nb.cells) if(c.result&&!S.results[c.id]) S.results[c.id]=analyze(c.result);
   renderAll();
+  loadNbSidebar();
   await loadSchema();
   const h=await api("/health",{auth:false});
+  paintDbStatus(h);
   if(!h.source) openConnect();
+}
+function paintDbStatus(h){
+  const dot=$("dbDot"), label=$("dbLabel"), chip=$("dbStatus");
+  if(!h?.source){ dot.classList.remove("on"); label.textContent="not connected"; chip.title=""; return; }
+  dot.classList.toggle("on",!!h.connected);
+  const p=h.source.params||{}, kind=h.source.kind;
+  let bits=[];
+  if(kind==="mysql") bits=[p.host&&p.port?`${p.host}:${p.port}`:p.host,p.user,p.database];
+  else if(kind==="ducklake") bits=[String(p.metadata||"").replace(/^quack:/,""),p.data_path];
+  else if(kind==="duckdb") bits=[p.path];
+  label.textContent=`${kind}${bits.filter(Boolean).length?" · "+bits.filter(Boolean).join(" · "):""}`;
+  chip.title=`${h.source.name} - ${h.connected?"connected":"configured, not yet connected"}`;
 }
 
 async function loadSchema(){
@@ -635,7 +664,7 @@ async function saveNotebook(){
   if(!name){ $("nbName").focus(); $("saveMsg").textContent="name it first"; return; }
   $("saveMsg").innerHTML=`saving <span class="spin"></span>`;
   try{ const d=await api("/notebooks/"+encodeURIComponent(name),{method:"PUT",body:{cells:cleanCells()}});
-    $("saveMsg").textContent=`saved ${d.saved_at.slice(11,16)}`; }
+    $("saveMsg").textContent=`saved ${d.saved_at.slice(11,16)}`; loadNbSidebar(); }
   catch(e){ $("saveMsg").innerHTML=`<span style="color:var(--bad)">${esc(e.message)}</span>`; }
 }
 $("saveBtn").onclick=saveNotebook;
@@ -648,8 +677,24 @@ async function openNotebook(name){
   // agent call. A cell with nothing cached (added but never run before saving) just
   // shows "not run yet" - Run/Run all is one click away when a refresh is wanted.
   for(const c of S.nb.cells) if(c.result) S.results[c.id]=analyze(c.result);
-  $("nbName").value=name; $("saveMsg").textContent=""; closeModal(); renderAll(); saveDraft();
+  $("nbName").value=name; $("saveMsg").textContent=""; closeModal(); renderAll(); saveDraft(); loadNbSidebar();
 }
+// Sidebar tile: every saved notebook, one click to switch, current one highlighted -
+// the modal-based Open list (openList) is still there for its Delete action.
+async function loadNbSidebar(){
+  const el=$("nbSidebarList"); if(!el) return;
+  try{
+    const d=await api("/notebooks");
+    el.innerHTML=d.notebooks.length?d.notebooks.map(n=>`
+      <div class="nbrow2${n.name===S.nb.name?" on":""}" onclick="openNotebook('${esc(n.name)}')" title="${esc(n.cells)} cells">
+        <span class="n">${esc(n.name)}</span><span class="dim">${n.cells}</span></div>`).join("")
+      : `<div class="dim">none yet - Save this one to start.</div>`;
+  }catch{ el.innerHTML=`<div class="dim">couldn't load</div>`; }
+}
+$("nbNewBtn").onclick=()=>{
+  S.nb={name:"",cells:[]}; S.results={}; addCell("ask",false);
+  $("nbName").value=""; $("saveMsg").textContent=""; renderAll(); saveDraft(); loadNbSidebar();
+};
 async function openList(){
   openModal(`<h1 style="font-size:16px;margin:0 0 4px">Notebooks</h1>
     <div class="dim">Saved on this machine, in escrowe's home folder, with each cell's last result - opening one shows it instantly; Run/Run all refreshes.</div>
@@ -667,7 +712,7 @@ async function openList(){
 }
 async function deleteNotebook(name){
   if(!confirm(`Delete notebook "${name}"?`)) return;
-  await api("/notebooks/"+encodeURIComponent(name),{method:"DELETE"}); openList();
+  await api("/notebooks/"+encodeURIComponent(name),{method:"DELETE"}); openList(); loadNbSidebar();
 }
 $("openBtn").onclick=openList;
 
@@ -679,6 +724,18 @@ function dbFields(p,port){return `<div class="grid2">
     <div><label>User</label><input id="${p}user"></div>
     <div><label>Password</label><input id="${p}pass" type="password"></div></div>
   <label>Database</label><input id="${p}db">`;}
+function ducklakeFields(){return `
+  <label>Quack server (host:port)</label><input id="dqhost" value="127.0.0.1:443">
+  <label>Quack token</label><input id="dqtoken" type="password">
+  <label>Data path <span class="dim"> - s3://…, r2://…; only needed the first time this catalog is used</span></label>
+  <input id="dqdata" placeholder="s3://bucket/path">`;}
+function duckdbFields(){return `
+  <label>File path</label><input id="ddbpath" placeholder="/path/to/database.duckdb">`;}
+function kindFields(kind){
+  if(kind==="ducklake") return ducklakeFields();
+  if(kind==="duckdb") return duckdbFields();
+  return dbFields("d",3306);
+}
 
 function openConnect(){
   openModal(`<h1 style="font-size:16px;margin:0 0 4px">Connect a database</h1>
@@ -687,7 +744,9 @@ function openConnect(){
       <button class="on" data-c="form">Fill in details</button><button data-c="dsn">Paste a connection string</button></div>
     <div id="cForm">
       <label>Type</label>
-      <select id="kind" style="width:100%;padding:9px 10px;font-size:inherit"><option value="mysql">MySQL</option></select>
+      <select id="kind" style="width:100%;padding:9px 10px;font-size:inherit">
+        <option value="mysql">MySQL</option><option value="ducklake">DuckLake</option>
+        <option value="duckdb">DuckDB (local file)</option></select>
       <label>Name in SQL</label><input id="sname" value="mysql">
       <div id="kindFields"></div>
     </div>
@@ -701,7 +760,7 @@ function openConnect(){
     <div id="cMsg"></div>
     <div id="cList" style="margin-top:16px"></div>`);
 
-  const paint=()=>{ $("kindFields").innerHTML=dbFields("d",3306); $("sname").value=$("kind").value; };
+  const paint=()=>{ $("kindFields").innerHTML=kindFields($("kind").value); $("sname").value=$("kind").value; };
   paint(); $("kind").onchange=paint;
   document.querySelectorAll("#modal .tabs button").forEach(b=>b.onclick=()=>{
     document.querySelectorAll("#modal .tabs button").forEach(x=>x.classList.remove("on")); b.classList.add("on");
@@ -713,9 +772,18 @@ function collect(){
   if(!$("cDsn").classList.contains("hide"))
     return {dsn:$("dsn").value.trim(), name:$("dsnName").value.trim()||null};
   const kind=$("kind").value, name=$("sname").value.trim(), v=id=>($(id)?.value||"").trim();
-  const o={host:v("dhost"),user:v("duser"),password:v("dpass"),database:v("ddb")};
-  if(v("dport")) o.port=+v("dport");
-  const params=Object.fromEntries(Object.entries(o).filter(([,x])=>x!==""&&x!==undefined));
+  let params;
+  if(kind==="ducklake"){
+    params={metadata:"quack:"+v("dqhost")};
+    if(v("dqtoken")) params.token=v("dqtoken");
+    if(v("dqdata")) params.data_path=v("dqdata");
+  }else if(kind==="duckdb"){
+    params={path:v("ddbpath")};
+  }else{
+    const o={host:v("dhost"),user:v("duser"),password:v("dpass"),database:v("ddb")};
+    if(v("dport")) o.port=+v("dport");
+    params=Object.fromEntries(Object.entries(o).filter(([,x])=>x!==""&&x!==undefined));
+  }
   return {name,kind,params};
 }
 
@@ -724,7 +792,7 @@ async function submitConnect(){
   try{
     const d=await api("/sources",{method:"POST",body:collect()});
     $("cMsg").innerHTML=`<div class="banner ok"><b>Connected ${esc(d.name)}</b> - ${d.tables.length} tables.</div>`;
-    await listSources(); await loadSchema();
+    await listSources(); await loadSchema(); paintDbStatus(await api("/health",{auth:false}));
   }catch(e){ $("cMsg").innerHTML=`<div class="banner bad">${esc(e.message)}</div>`; }
   $("cGo").disabled=false;
 }

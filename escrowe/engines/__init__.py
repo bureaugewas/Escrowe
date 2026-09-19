@@ -3,12 +3,13 @@ database system by adding one module here (subclassing DirectEngine) and
 registering it below - nothing elsewhere needs to change."""
 
 from .base import Column, DirectEngine, EngineError
-from .ducklake import DuckLakeEngine
+from .ducklake import DuckDBEngine, DuckLakeEngine
 from .mysql import MySQLEngine
 
 REGISTRY: dict[str, type[DirectEngine]] = {
     "mysql": MySQLEngine,
     "ducklake": DuckLakeEngine,
+    "duckdb": DuckDBEngine,
 }
 
 
