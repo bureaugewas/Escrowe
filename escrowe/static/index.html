@@ -239,7 +239,7 @@ async function start(){
   $("whoami").textContent=S.user+(S.operator?" · operator":"");
   $("outBtn").classList.toggle("hide",!S.token);      // nothing to log out of in operator mode
   if(!S.nb.cells.length) loadDraft();
-  if(!S.nb.cells.length) addCell("sql",false);
+  if(!S.nb.cells.length) addCell("ask",false);
   renderAll();
   await loadSchema();
   const h=await api("/health",{auth:false});
