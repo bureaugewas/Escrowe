@@ -50,6 +50,11 @@
   header .sep{width:1px;height:22px;background:var(--line);margin:0 4px}
   #nbName{width:200px;padding:5px 9px;font-weight:600}
   .chip{background:var(--panel2);border:1px solid var(--line);border-radius:20px;padding:3px 11px;font-size:12px}
+  .ymulti{grid-column:1/-1}
+  .chips{display:flex;flex-wrap:wrap;gap:6px;margin-top:4px}
+  .chip-check{display:flex;align-items:center;gap:5px;background:var(--panel2);border:1px solid var(--line);
+             border-radius:20px;padding:3px 11px 3px 8px;font-size:12px;cursor:pointer;user-select:none}
+  .chip-check input{width:auto;margin:0}
   .spacer{flex:1}
   main{display:grid;grid-template-columns:270px 1fr;gap:14px;padding:14px 16px;align-items:start}
   main.nosb{grid-template-columns:1fr}
@@ -380,8 +385,12 @@ function suggest(res){
   if(n===1&&nums.length&&nums.length===cols.length) return {type:"stat"};
   if(n===1&&nums.length&&cols.length<=4) return {type:"stat"};
   if(dates.length&&nums.length){
+    const cat=texts.find(t=>t.distinct>1&&t.distinct<=8);
+    // One date + several numbers, nothing to split by category: plot every number as its
+    // own line (color = which column, not a data value) rather than picking just the first.
+    if(!cat&&nums.length>1) return {type:"line",x:dates[0].name,y:nums.slice(0,8).map(k=>k.name)};
     const s={type:"line",x:dates[0].name,y:nums[0].name};
-    const cat=texts.find(t=>t.distinct>1&&t.distinct<=8); if(cat) s.color=cat.name; return s;
+    if(cat) s.color=cat.name; return s;
   }
   if(texts.length&&nums.length){
     const cat=texts.find(t=>t.distinct<=40)||null;
@@ -469,19 +478,43 @@ function toggleCfg(id,force){
   const cfg=c.chart||{}, sp=spec(c,r), types=["auto","bar","line","area","scatter","stat","table"];
   const opt=(cur,allowNone)=>(allowNone?`<option value="">–</option>`:"")+r.columns.map(k=>
     `<option value="${esc(k.name)}"${k.name===cur?" selected":""}>${esc(k.name)} (${k.type})</option>`).join("");
+  const multiSeries=sp.type==="line"||sp.type==="area";     // one date on x, several numbers as separate lines
+  const yArr=Array.isArray(sp.y)?sp.y:sp.y?[sp.y]:[];
+  const numCols=r.columns.filter(k=>k.type==="number");
+  // Checkboxes, not a native multi-select: picking several columns with ctrl/cmd-click
+  // isn't discoverable, and this is exactly the "several numbers, several colors, a
+  // legend" case - restricted to one x (time or otherwise), several y's.
+  const yControl=multiSeries
+    ?`<div class="ymulti"><label>Y (pick one or more)</label><div class="chips">${numCols.map(k=>
+        `<label class="chip-check"><input type="checkbox" value="${esc(k.name)}" onchange="toggleY('${id}',this)"
+           ${yArr.includes(k.name)?"checked":""}> ${esc(k.name)}</label>`).join("")}</div></div>`
+    :`<div><label>Y</label><select onchange="setCfg('${id}','y',this.value)">${opt(sp.y,true)}</select></div>`;
   el.innerHTML=`
     <div><label>Chart</label><select onchange="setCfg('${id}','type',this.value)">
       ${types.map(t=>`<option value="${t}"${(cfg.type||"auto")===t?" selected":""}>${t==="auto"?"auto ("+sp.type+")":t}</option>`).join("")}</select></div>
     <div><label>X</label><select onchange="setCfg('${id}','x',this.value)">${opt(sp.x,true)}</select></div>
-    <div><label>Y</label><select onchange="setCfg('${id}','y',this.value)">${opt(sp.y,true)}</select></div>
-    <div><label>Color</label><select onchange="setCfg('${id}','color',this.value)">${opt(sp.color,true)}</select></div>
+    ${yControl}
+    ${multiSeries&&yArr.length>1?"":`<div><label>Color</label><select onchange="setCfg('${id}','color',this.value)">${opt(sp.color,true)}</select></div>`}
     <div><label>Size</label><select onchange="setCfg('${id}','size',this.value)">${opt(sp.size,true)}</select></div>
     <div style="align-self:end"><button class="ghost sm" onclick="setCfg('${id}',null)">Reset to auto</button></div>`;
+}
+function toggleY(id,el){
+  const c=cell(id), r=S.results[id], sp=spec(c,r);
+  const chosen=[...el.closest(".ymulti").querySelectorAll("input[type=checkbox]")]
+    .filter(cb=>cb.checked).map(cb=>cb.value);
+  c.chart={...(c.chart||{}), type:c.chart?.type&&c.chart.type!=="auto"?c.chart.type:sp.type,
+           x:sp.x, y:chosen.length?(chosen.length===1?chosen[0]:chosen):null, color:null, size:sp.size, view:"chart"};
+  renderOut(id); saveDraft();
 }
 function setCfg(id,k,v){
   const c=cell(id);
   if(k===null) c.chart={type:"auto",view:c.chart?.view||"chart"};
-  else if(k==="type"){ const sp=spec(c,S.results[id]); c.chart={...(c.chart||{}),type:v}; if(v!=="auto"){ c.chart.x=sp.x; c.chart.y=sp.y; c.chart.color=sp.color; c.chart.size=sp.size; } }
+  else if(k==="type"){
+    const sp=spec(c,S.results[id]);
+    let y=sp.y;
+    if(v!=="line"&&v!=="area"&&Array.isArray(y)) y=y[0]||null;   // multi-y only makes sense on line/area
+    c.chart={...(c.chart||{}),type:v}; if(v!=="auto"){ c.chart.x=sp.x; c.chart.y=y; c.chart.color=sp.color; c.chart.size=sp.size; }
+  }
   else{ const sp=spec(c,S.results[id]); c.chart={...(c.chart||{}),type:c.chart?.type&&c.chart.type!=="auto"?c.chart.type:sp.type,
           x:sp.x,y:sp.y,color:sp.color,size:sp.size,[k]:v||null}; }
   c.chart.view="chart"; renderOut(id); saveDraft();
@@ -503,17 +536,17 @@ function drawChart(host,r,sp,c){
   const series=[1,2,3,4,5,6,7,8].map(i=>cssVar("--s"+i));
   const width=Math.max(280,host.clientWidth||host.parentElement.clientWidth||600);
   const col=n=>r.columns.find(k=>k.name===n);
-  const data=r.data, xs=col(sp.x), ys=col(sp.y);
-  if(!xs||!ys){ host.innerHTML=`<div class="dim">Pick an X and a Y column.</div>`; return; }
+  const data=r.data, xs=col(sp.x), yNames=Array.isArray(sp.y)?sp.y:sp.y?[sp.y]:[];
+  if(!xs||!yNames.length||yNames.some(n=>!col(n))){ host.innerHTML=`<div class="dim">Pick an X and a Y column.</div>`; return; }
+  const multiY=yNames.length>1;
   const fmtDate=d3.timeFormat("%Y-%m-%d");
   // A bar category's label - String(Date) is ~50 chars ("Sat Jan 01 2024 00:00:00 GMT+0200 (Central
   // European Summer Time)"), which always tripped the "long labels -> go horizontal" heuristic below
   // and showed only its truncated tail. A short date keeps time-series bars vertical, as expected.
   const catLabel=v=>(xs.type==="date"&&v instanceof Date&&!isNaN(v))?fmtDate(v):String(v);
-  const marks=[], o={x:{label:sp.x},y:{label:sp.y,grid:true},width,height:280,marginLeft:56,
+  const marks=[], o={x:{label:sp.x},y:{label:multiY?null:sp.y,grid:true},width,height:280,marginLeft:56,
                      style:{background:"transparent",color:cssVar("--dim"),fontSize:"11px"},
-                     color:sp.color?{legend:true,range:series}:undefined};
-  const tipOpts={x:sp.x,y:sp.y,...(sp.color?{stroke:sp.color}:{})};
+                     color:(sp.color||multiY)?{legend:true,range:series}:undefined};
   try{
     if(sp.type==="bar"){
       const cats=[...new Set(data.map(d=>catLabel(d[sp.x])))];        // keep the query's own order
@@ -529,11 +562,17 @@ function drawChart(host,r,sp,c){
         marks.push(Plot.ruleY([0],{stroke:cssVar("--line")}));
       }
     }else if(sp.type==="line"||sp.type==="area"){
-      const sorted=[...data].sort((a,b)=>d3.ascending(a[sp.x],b[sp.x]));
-      if(sp.type==="area") marks.push(Plot.areaY(sorted,{x:sp.x,y:sp.y,fill:sp.color||series[0],fillOpacity:.25,z:sp.color}));
-      marks.push(Plot.lineY(sorted,{x:sp.x,y:sp.y,stroke:sp.color||series[0],strokeWidth:2,z:sp.color}));
-      if(sorted.length<=60) marks.push(Plot.dot(sorted,{x:sp.x,y:sp.y,fill:sp.color||series[0],r:3}));
-      marks.push(Plot.tip(sorted,Plot.pointerX(tipOpts)));
+      // One x, several y columns: reshape wide -> long (one row per x/series pair) so each
+      // number gets its own line, colored and legended by which column it came from. Keeps
+      // every original field too, so a single-y "color by category" grouping still works.
+      const long=multiY?data.flatMap(d=>yNames.map(yn=>({...d,value:d[yn],series:yn})))
+                       :data.map(d=>({...d,value:d[yNames[0]]}));
+      const sorted=[...long].sort((a,b)=>d3.ascending(a[sp.x],b[sp.x]));
+      const stroke=multiY?"series":(sp.color||series[0]), z=multiY?"series":sp.color;
+      if(sp.type==="area") marks.push(Plot.areaY(sorted,{x:sp.x,y:"value",fill:stroke,fillOpacity:.25,z}));
+      marks.push(Plot.lineY(sorted,{x:sp.x,y:"value",stroke,strokeWidth:2,z}));
+      if(sorted.length<=200) marks.push(Plot.dot(sorted,{x:sp.x,y:"value",fill:stroke,r:3}));
+      marks.push(Plot.tip(sorted,Plot.pointerX({x:sp.x,y:"value",stroke:multiY?"series":(sp.color||undefined)})));
     }else{ // scatter
       marks.push(Plot.dot(data,{x:sp.x,y:sp.y,stroke:sp.color||series[0],fill:sp.color||series[0],fillOpacity:.35,
                                 r:sp.size?sp.size:4,tip:true}));
