@@ -245,6 +245,7 @@ async function start(){
   $("outBtn").classList.toggle("hide",!S.token);      // nothing to log out of in operator mode
   if(!S.nb.cells.length) loadDraft();
   if(!S.nb.cells.length) addCell("ask",false);
+  for(const c of S.nb.cells) if(c.result&&!S.results[c.id]) S.results[c.id]=analyze(c.result);
   renderAll();
   await loadSchema();
   const h=await api("/health",{auth:false});
@@ -332,13 +333,13 @@ async function runCell(id){
   el.querySelector(".out").innerHTML=`<div class="dim">${c.kind==="ask"?"the agent is writing a query":"running"} <span class="spin"></span></div>`;
   try{
     const r=await api(c.kind==="ask"?"/ask":"/sql",{method:"POST",body:c.kind==="ask"?{question:text}:{sql:text}});
-    S.results[id]=analyze(r);
+    S.results[id]=analyze(r); c.result=r;      // cached and saved, so reopening needs no query/agent call
   }catch(err){
     const kind=err.status===403?"Not allowed":err.status===401?"Session ended":"Error";
     S.results[id]={error:`<b>${kind}.</b> ${esc(err.message)}`};
     if(err.status===401) setTimeout(logout,1200);
   }
-  el.classList.remove("running"); renderOut(id);
+  el.classList.remove("running"); renderOut(id); saveDraft();
 }
 async function runAll(){
   $("runAllBtn").disabled=true;
@@ -616,9 +617,12 @@ $("presentBtn").onclick=()=>setPresent(!S.present);
 document.addEventListener("keydown",e=>{ if(e.key==="Escape"&&S.present) setPresent(false); });
 
 /* ------------------------------------------------------- persistence */
-// What goes to disk: cell definitions only - never the cached results.
+// What goes to disk (or the local draft): cell definitions plus each cell's
+// last result, so opening a notebook shows it instantly with no re-query and
+// no agent call - Run/Run all refreshes a cell on request.
 function cleanCells(){ return S.nb.cells.map(c=>{ const {type,x,y,color,size,view}=c.chart||{};
-  return {id:c.id,kind:c.kind,title:c.title||"",text:c.text||"",chart:{type:type||"auto",x,y,color,size,view:view||"chart"}}; }); }
+  return {id:c.id,kind:c.kind,title:c.title||"",text:c.text||"",chart:{type:type||"auto",x,y,color,size,view:view||"chart"},
+          result:c.result||null}; }); }
 let draftT; function saveDraft(){ clearTimeout(draftT); draftT=setTimeout(()=>{
   try{ localStorage.setItem(DRAFT_KEY,JSON.stringify({name:$("nbName").value,cells:cleanCells()})); }catch{} },300); }
 function loadDraft(){
@@ -640,12 +644,15 @@ document.addEventListener("keydown",e=>{ if((e.metaKey||e.ctrlKey)&&e.key==="s"&
 async function openNotebook(name){
   const d=await api("/notebooks/"+encodeURIComponent(name));
   S.nb={name,cells:d.cells.map(c=>({...c,chart:c.chart||{type:"auto",view:"chart"}}))}; S.results={};
+  // Each cell's last result was saved alongside it: show it instantly, no query, no
+  // agent call. A cell with nothing cached (added but never run before saving) just
+  // shows "not run yet" - Run/Run all is one click away when a refresh is wanted.
+  for(const c of S.nb.cells) if(c.result) S.results[c.id]=analyze(c.result);
   $("nbName").value=name; $("saveMsg").textContent=""; closeModal(); renderAll(); saveDraft();
-  await runAll();                                    // saved notebooks hold no data: rerun fresh
 }
 async function openList(){
   openModal(`<h1 style="font-size:16px;margin:0 0 4px">Notebooks</h1>
-    <div class="dim">Saved on this machine, in escrowe's home folder. Cells only - results are fetched fresh when opened.</div>
+    <div class="dim">Saved on this machine, in escrowe's home folder, with each cell's last result - opening one shows it instantly; Run/Run all refreshes.</div>
     <div id="nbList" style="margin-top:12px" class="dim">loading…</div>
     <div class="row" style="margin-top:14px"><button class="ghost" onclick="closeModal()">Close</button></div>`);
   try{

@@ -46,14 +46,20 @@ class NotebookBody(BaseModel):
     cells: list[dict]
 
 
-# Notebooks are cell *definitions* only - the SQL/question text and how to chart
-# it. Result rows never go to disk: only these keys survive a save, so a client
-# that forgot to strip its cached data still can't persist it.
+# A notebook is its cells: the SQL/question text, how to chart it, and (so
+# opening one doesn't re-query or re-invoke the agent) its last result. Only
+# these keys ever survive a save - a client sending anything else can't
+# persist it - and a cached result is size-capped (see _MAX_RESULT_BYTES).
 _NOTEBOOK_NAME = re.compile(r"^[A-Za-z0-9][A-Za-z0-9 _.-]{0,63}$")
-_CELL_KEYS = ("id", "kind", "title", "text", "chart")
+_CELL_KEYS = ("id", "kind", "title", "text", "chart", "result")
 _CELL_KINDS = ("sql", "ask", "md")
 _MAX_CELLS = 200
 _MAX_TEXT = 20_000
+# A cell's cached result (its last /sql or /ask response) is saved alongside the
+# definition, so opening a notebook shows it instantly with no agent call and no
+# re-query - "Run"/"Run all" refreshes it on request. Capped per cell so a huge
+# result can't silently balloon the notebook file.
+_MAX_RESULT_BYTES = 2_000_000
 
 
 def create_app(escrowe: Escrowe | None = None, local_operator: bool = False) -> FastAPI:
@@ -201,6 +207,13 @@ def create_app(escrowe: Escrowe | None = None, local_operator: bool = False) -> 
                 raise HTTPException(400, f"A cell's text is limited to {_MAX_TEXT} characters.")
             if "chart" in kept and not isinstance(kept["chart"], dict):
                 raise HTTPException(400, "Cell chart config must be an object.")
+            if "result" in kept:
+                if kept["result"] is not None and not isinstance(kept["result"], dict):
+                    raise HTTPException(400, "Cell result must be an object.")
+                if len(json.dumps(kept["result"])) > _MAX_RESULT_BYTES:
+                    raise HTTPException(400, "A cell's cached result is too large to save "
+                                         f"(limit {_MAX_RESULT_BYTES // 1_000_000} MB) - "
+                                         "narrow the query or clear its cache before saving.")
             out.append(kept)
         return out
 
