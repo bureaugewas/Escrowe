@@ -499,8 +499,7 @@ function renderOut(id){
   if(!r){ out.innerHTML=S.present?`<div class="dim">not run yet</div>`:""; return; }
   if(r.error){ out.innerHTML=`<div class="banner bad">${r.error}</div>`; return; }
   if(r.answer!==undefined){
-    out.innerHTML=`<div class="dim sqlnote">from the schema</div><pre>${esc(r.answer)}</pre>
-      <div class="meta dim">audit #${r.audit_id}</div>`; return;
+    out.innerHTML=`<div class="dim sqlnote">from the schema</div><pre>${esc(r.answer)}</pre>`; return;
   }
   const sp=spec(c,r), view=c.chart?.view||"chart", canChart=HAS_PLOT||sp.type==="stat"||sp.type==="table";
   const showChart=view==="chart"&&sp.type!=="table"&&canChart;
@@ -515,7 +514,7 @@ function renderOut(id){
           <button class="${!showChart?"on":""}" onclick="setView('${id}','table')">Table</button>
         </span>
         <button class="ghost sm" onclick="toggleCfg('${id}')">⚙ chart</button>
-        <span class="dim">${r.row_count} row(s) · ${r.duration_ms} ms · audit #${r.audit_id}${notes.length?" · "+esc(notes.join(" · ")):""}
+        <span class="dim">${r.row_count} row(s) · ${r.duration_ms} ms${notes.length?" · "+esc(notes.join(" · ")):""}
           ${!HAS_PLOT?" · charts unavailable offline":""}</span>
         <span class="spacer"></span>
         <button class="ghost sm" onclick="downloadCsv('${id}')">CSV</button>
@@ -726,20 +725,33 @@ function cleanCells(){ return S.nb.cells.map(c=>{ const {type,x,y,color,size,vie
   return {id:c.id,kind:c.kind,title:c.title||"",text:c.text||"",chart:{type:type||"auto",x,y,color,size,view:view||"chart"},
           result:c.result||null}; }); }
 let draftT; function saveDraft(){ clearTimeout(draftT); draftT=setTimeout(()=>{
-  try{ localStorage.setItem(DRAFT_KEY,JSON.stringify({name:$("nbName").value,cells:cleanCells()})); }catch{} },300); }
+  try{ localStorage.setItem(DRAFT_KEY,JSON.stringify({name:$("nbName").value,cells:cleanCells()})); }catch{}
+  autoSaveNotebook();
+},400); }
+// No manual save required: whatever's being worked on saves itself to the server a
+// moment after each change (same debounce as the local draft). A brand-new notebook
+// with no name yet gets one assigned automatically the first time there's something
+// worth keeping, so this never needs an explicit Save click - the button still exists
+// for "save this exact instant" reassurance, it's just never required.
+function autoSaveNotebook(){
+  if(!S.nb.cells.some(c=>(c.text||"").trim())) return;   // nothing worth saving yet
+  let name=$("nbName").value.trim();
+  if(!name){
+    name=`Untitled ${new Date().toISOString().slice(0,16).replace("T","-").replace(":","-")}`;
+    $("nbName").value=name;
+  }
+  api("/notebooks/"+encodeURIComponent(name),{method:"PUT",body:{cells:cleanCells()}})
+    .then(d=>{ $("saveMsg").textContent=`saved ${d.saved_at.slice(11,16)}`; loadNbSidebar(); })
+    .catch(e=>{ $("saveMsg").innerHTML=`<span style="color:var(--bad)">${esc(e.message)}</span>`; });
+}
 function loadDraft(){
   try{ const d=JSON.parse(localStorage.getItem(DRAFT_KEY)||"null"); if(d?.cells?.length){ S.nb.cells=d.cells; $("nbName").value=d.name||""; } }catch{}
 }
 $("nbName").oninput=saveDraft;
 
-async function saveNotebook(){
-  const name=$("nbName").value.trim();
-  if(!name){ $("nbName").focus(); $("saveMsg").textContent="name it first"; return; }
-  $("saveMsg").innerHTML=`saving <span class="spin"></span>`;
-  try{ const d=await api("/notebooks/"+encodeURIComponent(name),{method:"PUT",body:{cells:cleanCells()}});
-    $("saveMsg").textContent=`saved ${d.saved_at.slice(11,16)}`; loadNbSidebar(); }
-  catch(e){ $("saveMsg").innerHTML=`<span style="color:var(--bad)">${esc(e.message)}</span>`; }
-}
+// The button (and ⌘S) just forces the same autosave to happen right now, instead of
+// waiting for the debounce - saving was never actually gated on clicking this.
+function saveNotebook(){ clearTimeout(draftT); $("saveMsg").innerHTML=`saving <span class="spin"></span>`; autoSaveNotebook(); }
 $("saveBtn").onclick=saveNotebook;
 document.addEventListener("keydown",e=>{ if((e.metaKey||e.ctrlKey)&&e.key==="s"&&S.token){ e.preventDefault(); saveNotebook(); } });
 
