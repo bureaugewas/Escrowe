@@ -403,7 +403,10 @@ function spec(c,res){
   let x=pick("x"),y=pick("y");
   if(type!=="stat"&&type!=="table"&&(!x||!y)){    // a manual type with no axes: fill sensibly
     const nums=res.columns.filter(k=>k.type==="number"), other=res.columns.filter(k=>k.type!=="number");
-    x=x||(type==="scatter"?nums[0]?.name:(other[0]||res.columns[0])?.name);
+    const dates=res.columns.filter(k=>k.type==="date");
+    // bar/line/area read as time series when there's a date column at all - put it on x
+    // by default rather than whichever non-number column happens to come first.
+    x=x||(type==="scatter"?nums[0]?.name:(dates[0]||other[0]||res.columns[0])?.name);
     y=y||(nums.find(k=>k.name!==x)||res.columns.find(k=>k.name!==x))?.name;
   }
   return {type,x,y,color:pick("color"),size:pick("size")};
@@ -502,22 +505,27 @@ function drawChart(host,r,sp,c){
   const col=n=>r.columns.find(k=>k.name===n);
   const data=r.data, xs=col(sp.x), ys=col(sp.y);
   if(!xs||!ys){ host.innerHTML=`<div class="dim">Pick an X and a Y column.</div>`; return; }
+  const fmtDate=d3.timeFormat("%Y-%m-%d");
+  // A bar category's label - String(Date) is ~50 chars ("Sat Jan 01 2024 00:00:00 GMT+0200 (Central
+  // European Summer Time)"), which always tripped the "long labels -> go horizontal" heuristic below
+  // and showed only its truncated tail. A short date keeps time-series bars vertical, as expected.
+  const catLabel=v=>(xs.type==="date"&&v instanceof Date&&!isNaN(v))?fmtDate(v):String(v);
   const marks=[], o={x:{label:sp.x},y:{label:sp.y,grid:true},width,height:280,marginLeft:56,
                      style:{background:"transparent",color:cssVar("--dim"),fontSize:"11px"},
                      color:sp.color?{legend:true,range:series}:undefined};
   const tipOpts={x:sp.x,y:sp.y,...(sp.color?{stroke:sp.color}:{})};
   try{
     if(sp.type==="bar"){
-      const cats=[...new Set(data.map(d=>String(d[sp.x])))];          // keep the query's own order
+      const cats=[...new Set(data.map(d=>catLabel(d[sp.x])))];        // keep the query's own order
       const horizontal=cats.length>8||cats.some(s=>s.length>12);
       if(horizontal){
         o.y={label:sp.x,domain:cats}; o.x={label:sp.y,grid:true}; o.marginLeft=Math.min(200,12+7*Math.max(...cats.map(s=>s.length)));
         o.height=Math.max(140,26*cats.length+50);
-        marks.push(Plot.barX(data,{y:d=>String(d[sp.x]),x:sp.y,fill:sp.color||series[0],insetTop:1,insetBottom:1,tip:true}));
+        marks.push(Plot.barX(data,{y:d=>catLabel(d[sp.x]),x:sp.y,fill:sp.color||series[0],insetTop:1,insetBottom:1,tip:true}));
         marks.push(Plot.ruleX([0],{stroke:cssVar("--line")}));
       }else{
         o.x={label:sp.x,domain:cats};
-        marks.push(Plot.barY(data,{x:d=>String(d[sp.x]),y:sp.y,fill:sp.color||series[0],insetLeft:1,insetRight:1,tip:true}));
+        marks.push(Plot.barY(data,{x:d=>catLabel(d[sp.x]),y:sp.y,fill:sp.color||series[0],insetLeft:1,insetRight:1,tip:true}));
         marks.push(Plot.ruleY([0],{stroke:cssVar("--line")}));
       }
     }else if(sp.type==="line"||sp.type==="area"){
