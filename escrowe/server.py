@@ -3,11 +3,14 @@
 from __future__ import annotations
 
 import io
+import json
+import re
+import time
 from pathlib import Path
 from typing import Optional
 
 import pyarrow.ipc as ipc
-from fastapi import Depends, FastAPI, Header, HTTPException, Query
+from fastapi import Depends, FastAPI, Header, HTTPException, Query, Request
 from fastapi.responses import FileResponse, Response
 from fastapi.staticfiles import StaticFiles
 from pydantic import BaseModel
@@ -39,7 +42,26 @@ class SourceBody(BaseModel):
     dsn: Optional[str] = None      # alternative to kind+params: a connection string
 
 
-def create_app(escrowe: Escrowe | None = None) -> FastAPI:
+class NotebookBody(BaseModel):
+    cells: list[dict]
+
+
+# Notebooks are cell *definitions* only - the SQL/question text and how to chart
+# it. Result rows never go to disk: only these keys survive a save, so a client
+# that forgot to strip its cached data still can't persist it.
+_NOTEBOOK_NAME = re.compile(r"^[A-Za-z0-9][A-Za-z0-9 _.-]{0,63}$")
+_CELL_KEYS = ("id", "kind", "title", "text", "chart")
+_CELL_KINDS = ("sql", "ask", "md")
+_MAX_CELLS = 200
+_MAX_TEXT = 20_000
+
+
+def create_app(escrowe: Escrowe | None = None, local_operator: bool = False) -> FastAPI:
+    """`local_operator=True` is what `escrowe -ui` passes: a request from this
+    machine with no bearer token runs as the operator - the account escrowe
+    itself connected with - exactly as the local CLI does without a separate
+    login. Anything bound beyond loopback (`escrowe serve`) leaves it off, so
+    over the network a token is always required."""
     svc = escrowe or Escrowe(load_settings())
     app = FastAPI(title="Escrowe", version="0.1.0")
     app.state.escrowe = svc
@@ -49,9 +71,16 @@ def create_app(escrowe: Escrowe | None = None) -> FastAPI:
             raise HTTPException(401, "Missing bearer token")
         return authorization[7:].strip()
 
-    def principal(token: str = Depends(bearer)) -> Principal:
+    def is_local(request: Request) -> bool:
+        return bool(request.client) and request.client.host in ("127.0.0.1", "::1", "localhost")
+
+    def principal(request: Request, authorization: str = Header(default="")) -> Principal:
+        if not authorization.lower().startswith("bearer "):
+            if local_operator and is_local(request):
+                return svc.operator_principal()
+            raise HTTPException(401, "Missing bearer token")
         try:
-            return svc.principal(token)
+            return svc.principal(authorization[7:].strip())
         except AuthError as e:
             raise HTTPException(401, str(e))
 
@@ -86,7 +115,7 @@ def create_app(escrowe: Escrowe | None = None) -> FastAPI:
 
     @app.get("/me")
     def me(p: Principal = Depends(principal)):
-        return {"user": p.user}
+        return {"user": p.user, "operator": p.session is None}
 
     @app.get("/metadata")
     def metadata(p: Principal = Depends(principal)):
@@ -148,6 +177,73 @@ def create_app(escrowe: Escrowe | None = None) -> FastAPI:
     def audit(p: Principal = Depends(principal), limit: int = 50):
         rows = svc.store.audit_rows(p.user, limit)
         return {"rows": [dict(r) for r in rows]}
+
+    # ------------------------------------------------------------ notebooks
+    nb_dir = svc.settings.home / "notebooks"
+
+    def nb_path(name: str) -> Path:
+        if not _NOTEBOOK_NAME.match(name):
+            raise HTTPException(400, "Notebook names: letters, digits, spaces, . _ - (max 64).")
+        return nb_dir / f"{name}.json"
+
+    def clean_cells(cells: list[dict]) -> list[dict]:
+        if len(cells) > _MAX_CELLS:
+            raise HTTPException(400, f"At most {_MAX_CELLS} cells per notebook.")
+        out = []
+        for c in cells:
+            if not isinstance(c, dict) or c.get("kind") not in _CELL_KINDS:
+                raise HTTPException(400, "Each cell needs a kind: sql, ask or md.")
+            kept = {k: c[k] for k in _CELL_KEYS if k in c}
+            for k in ("id", "title", "text"):
+                if k in kept and not isinstance(kept[k], str):
+                    raise HTTPException(400, f"Cell {k} must be text.")
+            if len(kept.get("text", "")) > _MAX_TEXT:
+                raise HTTPException(400, f"A cell's text is limited to {_MAX_TEXT} characters.")
+            if "chart" in kept and not isinstance(kept["chart"], dict):
+                raise HTTPException(400, "Cell chart config must be an object.")
+            out.append(kept)
+        return out
+
+    @app.get("/notebooks")
+    def list_notebooks(p: Principal = Depends(principal)):
+        items = []
+        if nb_dir.is_dir():
+            for f in sorted(nb_dir.glob("*.json")):
+                try:
+                    d = json.loads(f.read_text())
+                    items.append({"name": f.stem, "cells": len(d.get("cells", [])),
+                                  "saved_at": d.get("saved_at"), "saved_by": d.get("saved_by")})
+                except (OSError, ValueError):
+                    continue
+        return {"notebooks": items}
+
+    @app.get("/notebooks/{name}")
+    def get_notebook(name: str, p: Principal = Depends(principal)):
+        path = nb_path(name)
+        if not path.is_file():
+            raise HTTPException(404, f"No notebook named {name!r}.")
+        try:
+            return json.loads(path.read_text())
+        except ValueError:
+            raise HTTPException(500, f"Notebook {name!r} is not valid JSON.")
+
+    @app.put("/notebooks/{name}")
+    def put_notebook(name: str, body: NotebookBody, p: Principal = Depends(principal)):
+        path = nb_path(name)
+        doc = {"name": name, "cells": clean_cells(body.cells),
+               "saved_at": time.strftime("%Y-%m-%dT%H:%M:%S"), "saved_by": p.user}
+        nb_dir.mkdir(parents=True, exist_ok=True)
+        tmp = path.with_suffix(".json.tmp")
+        tmp.write_text(json.dumps(doc, indent=1))
+        tmp.replace(path)
+        return {"ok": True, "name": name, "cells": len(doc["cells"]), "saved_at": doc["saved_at"]}
+
+    @app.delete("/notebooks/{name}")
+    def delete_notebook(name: str, p: Principal = Depends(principal)):
+        path = nb_path(name)
+        if path.is_file():
+            path.unlink()
+        return {"ok": True}
 
     ui_dir = Path(__file__).parent / "static"
     if ui_dir.is_dir():

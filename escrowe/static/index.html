@@ -5,20 +5,34 @@
 <meta name="viewport" content="width=device-width, initial-scale=1">
 <title>Escrowe</title>
 <link rel="icon" href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 32 32'%3E%3Crect width='32' height='32' rx='7' fill='%234c9aff'/%3E%3Cpath d='M11 10h10M11 16h7M11 22h10' stroke='%23fff' stroke-width='2.6' stroke-linecap='round'/%3E%3C/svg%3E">
+<!-- Charting: Observable Plot (needs d3 as a global). If these fail to load (offline),
+     cells still run and show tables; only the chart view is unavailable. -->
+<script src="https://cdn.jsdelivr.net/npm/d3@7.9.0/dist/d3.min.js"></script>
+<script src="https://cdn.jsdelivr.net/npm/@observablehq/plot@0.6.16/dist/plot.umd.min.js"></script>
 <style>
   :root{--bg:#0e1116;--panel:#161b22;--panel2:#11151b;--line:#262d36;--text:#d7dee8;--dim:#8b97a6;
-        --accent:#6cb6ff;--ok:#3fcf8e;--bad:#ff6b6b;--warn:#ffb347;--radius:10px}
+        --accent:#6cb6ff;--ok:#3fcf8e;--bad:#ff6b6b;--warn:#ffb347;--radius:10px;
+        /* chart series (validated categorical order, dark steps) */
+        --s1:#3987e5;--s2:#d95926;--s3:#199e70;--s4:#c98500;--s5:#d55181;--s6:#008300;--s7:#9085e9;--s8:#e66767;
+        --grid:#2c2c2a}
   @media (prefers-color-scheme:light){:root:not([data-theme="dark"]){--bg:#f6f8fa;--panel:#fff;--panel2:#f0f3f6;
-        --line:#d8dee4;--text:#1f2933;--dim:#5c6b7a;--accent:#0b62d6}}
+        --line:#d8dee4;--text:#1f2933;--dim:#5c6b7a;--accent:#0b62d6;
+        --s1:#2a78d6;--s2:#eb6834;--s3:#1baf7a;--s4:#eda100;--s5:#e87ba4;--s6:#008300;--s7:#4a3aa7;--s8:#e34948;
+        --grid:#e1e0d9}}
   *{box-sizing:border-box}
   body{margin:0;background:var(--bg);color:var(--text);font:14px/1.5 -apple-system,"Segoe UI",Roboto,sans-serif}
   button{background:var(--accent);color:#fff;border:0;padding:8px 14px;border-radius:8px;cursor:pointer;
          font-weight:600;font-size:13px}
   button.ghost{background:transparent;color:var(--text);border:1px solid var(--line)}
+  button.sm{padding:3px 9px;font-size:12px}
+  button.icon{background:transparent;color:var(--dim);border:0;padding:2px 6px;font-size:14px;line-height:1}
+  button.icon:hover{color:var(--text)}
   button:disabled{opacity:.5;cursor:default}
   input,select,textarea{width:100%;background:var(--panel2);color:var(--text);border:1px solid var(--line);
          border-radius:8px;padding:9px 10px;font:inherit}
+  select{width:auto;padding:4px 8px;font-size:12px}
   textarea{resize:vertical;min-height:74px}
+  textarea.code{font:12.5px/1.45 ui-monospace,SFMono-Regular,Menlo,monospace}
   label{display:block;margin:10px 0 4px;color:var(--dim);font-size:12px}
   .panel{background:var(--panel);border:1px solid var(--line);border-radius:var(--radius);padding:16px}
   .row{display:flex;gap:8px;flex-wrap:wrap;align-items:center}
@@ -29,14 +43,18 @@
   #gate{min-height:100vh;display:flex;align-items:center;justify-content:center;padding:24px}
   #gate .panel{width:380px}
   h1{font-size:20px;margin:0 0 2px}
-  /* app */
-  header{display:flex;gap:12px;align-items:center;padding:10px 16px;background:var(--panel);
+  /* app shell */
+  header{display:flex;gap:8px;align-items:center;padding:8px 16px;background:var(--panel);
          border-bottom:1px solid var(--line);position:sticky;top:0;z-index:5;flex-wrap:wrap}
   header b{font-size:15px}
+  header .sep{width:1px;height:22px;background:var(--line);margin:0 4px}
+  #nbName{width:200px;padding:5px 9px;font-weight:600}
   .chip{background:var(--panel2);border:1px solid var(--line);border-radius:20px;padding:3px 11px;font-size:12px}
   .spacer{flex:1}
-  main{display:grid;grid-template-columns:290px 1fr;gap:14px;padding:14px 16px;align-items:start}
+  main{display:grid;grid-template-columns:270px 1fr;gap:14px;padding:14px 16px;align-items:start}
+  main.nosb{grid-template-columns:1fr}
   @media (max-width:860px){main{grid-template-columns:1fr}}
+  #sidebar{position:sticky;top:60px;max-height:calc(100vh - 80px);overflow:auto}
   .tbl{border-bottom:1px solid var(--line);padding:7px 0}
   .tbl summary{cursor:pointer;list-style:none;display:flex;gap:6px;align-items:center;font-weight:600}
   .tbl summary::-webkit-details-marker{display:none}
@@ -46,6 +64,7 @@
   .col .t{margin-left:auto;font-size:10px;opacity:.7}
   table{border-collapse:collapse;width:100%;margin-top:10px;font-size:12.5px;display:block;overflow:auto;max-height:52vh}
   th,td{border:1px solid var(--line);padding:5px 9px;text-align:left;white-space:nowrap}
+  td.num{text-align:right;font-variant-numeric:tabular-nums}
   th{background:var(--panel2);color:var(--dim);position:sticky;top:0}
   pre{background:var(--panel2);border:1px solid var(--line);border-radius:8px;padding:10px;
       overflow:auto;font-size:12px;white-space:pre-wrap;margin:8px 0 0}
@@ -58,10 +77,56 @@
   .tabs button.on{background:var(--panel2);color:var(--text);border-color:var(--line)}
   #overlay{position:fixed;inset:0;background:rgba(0,0,0,.55);display:flex;align-items:flex-start;
            justify-content:center;padding:40px 16px;z-index:10;overflow:auto}
-  #overlay .panel{width:560px}
+  #overlay .panel{width:560px;max-width:100%}
   .spin:after{content:"";display:inline-block;width:11px;height:11px;border:2px solid var(--dim);
               border-top-color:transparent;border-radius:50%;animation:s .7s linear infinite;vertical-align:-1px}
   @keyframes s{to{transform:rotate(360deg)}}
+  /* notebook */
+  #cells{display:flex;flex-direction:column;gap:12px}
+  .cell{background:var(--panel);border:1px solid var(--line);border-radius:var(--radius);padding:12px 14px}
+  .cell.running{border-color:var(--accent)}
+  .cell .head{display:flex;gap:8px;align-items:center;margin-bottom:8px}
+  .cell .kind{font-size:11px;font-weight:700;letter-spacing:.04em;text-transform:uppercase;color:var(--dim);
+              border:1px solid var(--line);border-radius:6px;padding:2px 7px;background:var(--panel2)}
+  .cell .kind.ask{color:var(--accent);border-color:var(--accent)}
+  .cell .title{flex:1;background:transparent;border:1px solid transparent;padding:4px 6px;font-weight:600;font-size:14px}
+  .cell .title:hover,.cell .title:focus{border-color:var(--line);background:var(--panel2)}
+  .cell .tools{display:flex;gap:2px;align-items:center}
+  .cell .out{margin-top:8px}
+  .cell .meta{display:flex;gap:8px;align-items:center;margin-top:8px;flex-wrap:wrap}
+  .cell .viewsw button{padding:3px 10px}
+  .chart{margin-top:8px;overflow:hidden}
+  .chart svg{max-width:100%;height:auto;font:11px -apple-system,"Segoe UI",Roboto,sans-serif}
+  .chart figure{margin:0}
+  .chart [aria-label="tip"] text{fill:var(--text)}
+  .chart [aria-label="tip"] path{fill:var(--panel);stroke:var(--line)}
+  .stats{display:flex;gap:10px;flex-wrap:wrap;margin-top:8px}
+  .stat{flex:1;min-width:140px;background:var(--panel2);border:1px solid var(--line);border-radius:8px;padding:12px 14px}
+  .stat .v{font-size:30px;font-weight:600;line-height:1.15;letter-spacing:-.01em}
+  .stat .l{color:var(--dim);font-size:12px;margin-top:2px}
+  .cfg{display:grid;grid-template-columns:repeat(auto-fill,minmax(150px,1fr));gap:8px 12px;margin-top:8px;padding:10px;
+       background:var(--panel2);border:1px solid var(--line);border-radius:8px}
+  .cfg label{margin:0 0 3px}
+  .cfg select{width:100%}
+  .prose{line-height:1.6}
+  .prose h1{font-size:22px;margin:4px 0 6px}.prose h2{font-size:18px;margin:4px 0 6px}.prose h3{font-size:15px;margin:4px 0 4px}
+  .prose p{margin:4px 0 8px}.prose ul{margin:4px 0 8px;padding-left:22px}.prose code{background:var(--panel2);padding:1px 5px;border-radius:4px;font-size:12.5px}
+  .prose a{color:var(--accent)}
+  .addbar{display:flex;gap:8px;justify-content:center;padding:14px 0 30px;flex-wrap:wrap}
+  .empty{text-align:center;color:var(--dim);padding:40px 20px}
+  .nbrow{display:flex;gap:8px;align-items:center;padding:8px 0;border-top:1px solid var(--line)}
+  /* present mode: titles + visuals only */
+  body.present header .edit-only,body.present #sidebar,body.present .addbar,body.present .cell .editor,
+  body.present .cell .tools,body.present .cell .meta,body.present .cell .cfg,body.present .cell .kind,
+  body.present .cell .sqlnote{display:none!important}
+  body.present main{grid-template-columns:1fr;padding:18px 22px}
+  body.present #cells{display:grid;grid-template-columns:repeat(auto-fill,minmax(380px,1fr));gap:16px;align-items:start}
+  body.present .cell.wide{grid-column:1/-1}
+  body.present .cell .title{pointer-events:none;border-color:transparent!important;background:transparent!important;
+                            font-size:15px;padding-left:0}
+  body.present .cell .head{margin-bottom:2px}
+  body.present .cell table{max-height:340px}
+  body.present .stat .v{font-size:38px}
 </style>
 </head>
 <body>
@@ -85,35 +150,38 @@
 <div id="app" class="hide">
   <header>
     <b>Escrowe</b>
-    <span class="chip" id="whoami"></span>
+    <span class="chip edit-only" id="whoami"></span>
+    <span class="sep edit-only"></span>
+    <input id="nbName" placeholder="untitled notebook" title="Notebook name">
+    <button class="ghost sm edit-only" id="openBtn">Open</button>
+    <button class="ghost sm edit-only" id="saveBtn">Save</button>
+    <span class="dim edit-only" id="saveMsg"></span>
     <span class="spacer"></span>
-    <span class="dim" id="idle"></span>
-    <button class="ghost" id="connBtn">Connect database</button>
-    <button class="ghost" id="auditBtn">Audit</button>
-    <button class="ghost" id="outBtn">Log out</button>
+    <span class="dim edit-only" id="idle"></span>
+    <button class="ghost sm" id="runAllBtn">Run all</button>
+    <button class="sm" id="presentBtn">Present</button>
+    <span class="sep edit-only"></span>
+    <button class="ghost sm edit-only" id="sbBtn" title="Show or hide the schema">Schema</button>
+    <button class="ghost sm edit-only" id="connBtn">Connect database</button>
+    <button class="ghost sm edit-only" id="auditBtn">Audit</button>
+    <button class="ghost sm edit-only" id="outBtn">Log out</button>
   </header>
 
   <main>
-    <section class="panel">
+    <section class="panel" id="sidebar">
       <div class="row"><b style="font-size:13px">What the agent sees</b>
-        <span class="spacer"></span><button class="ghost" id="refreshMeta" style="padding:3px 9px">↻</button></div>
+        <span class="spacer"></span><button class="ghost sm" id="refreshMeta">↻</button></div>
       <div class="dim" style="margin:4px 0 8px">Names, types and comments - never a value.</div>
       <div id="schema"></div>
     </section>
 
-    <section class="panel">
-      <div class="tabs">
-        <button class="on" data-mode="ask">Ask a question</button>
-        <button data-mode="sql">Write SQL</button>
+    <section>
+      <div id="cells"></div>
+      <div class="addbar">
+        <button class="ghost" onclick="addCell('sql')">+ SQL</button>
+        <button class="ghost" onclick="addCell('ask')">+ Question</button>
+        <button class="ghost" onclick="addCell('md')">+ Text</button>
       </div>
-      <textarea id="q" placeholder="e.g. revenue per product category this year"></textarea>
-      <div class="row" style="margin-top:10px">
-        <button id="runBtn">Run</button>
-        <span class="dim">⌘/Ctrl + Enter</span>
-        <span class="spacer"></span>
-        <button class="ghost hide" id="csvBtn">Download CSV</button>
-      </div>
-      <div id="out"></div>
     </section>
   </main>
 </div>
@@ -123,8 +191,10 @@
 
 <script>
 const $=id=>document.getElementById(id), esc=s=>String(s??"").replace(/[&<>"]/g,c=>({"&":"&amp;","<":"&lt;",">":"&gt;",'"':"&quot;"}[c]));
-let S={token:null,user:null,mode:"ask",last:null,idleAt:0};
-const IDLE_MS=30*60*1000;
+let S={token:null,user:null,idleAt:0,present:false,nb:{name:"",cells:[]},results:{}};
+const IDLE_MS=30*60*1000, DRAFT_KEY="escrowe.notebook.draft";
+const uid=()=>Math.random().toString(36).slice(2,10);
+const HAS_PLOT=typeof Plot!=="undefined"&&typeof d3!=="undefined";
 
 async function api(path,{method="GET",body,auth=true}={}){
   const h={"Content-Type":"application/json"};
@@ -155,10 +225,22 @@ async function gateInfo(){
   }catch{}
 }
 
+// `escrowe -ui` serves loopback-only and runs token-less requests as the operator
+// (the account escrowe connected with), like the CLI. So: no login step unless
+// the server says one is needed - then the gate appears, as before.
+async function boot(){
+  try{ const d=await api("/me",{auth:false}); S={...S,token:null,user:d.user,operator:!!d.operator}; start(); }
+  catch{ gateInfo(); $("lu").focus(); }
+}
+
 /* --------------------------------------------------------------- app */
 async function start(){
   $("gate").classList.add("hide"); $("app").classList.remove("hide"); touch();
-  $("whoami").textContent=S.user;
+  $("whoami").textContent=S.user+(S.operator?" · operator":"");
+  $("outBtn").classList.toggle("hide",!S.token);      // nothing to log out of in operator mode
+  if(!S.nb.cells.length) loadDraft();
+  if(!S.nb.cells.length) addCell("sql",false);
+  renderAll();
   await loadSchema();
   const h=await api("/health",{auth:false});
   if(!h.source) openConnect();
@@ -179,51 +261,361 @@ async function loadSchema(){
   }catch(e){ $("schema").innerHTML=`<div class="banner bad">${esc(e.message)}</div>`; }
 }
 $("refreshMeta").onclick=loadSchema;
+$("sbBtn").onclick=()=>{ $("sidebar").classList.toggle("hide"); document.querySelector("main").classList.toggle("nosb"); rerenderCharts(); };
 
-document.querySelectorAll(".tabs button").forEach(b=>b.onclick=()=>{
-  document.querySelectorAll(".tabs button").forEach(x=>x.classList.remove("on"));
-  b.classList.add("on"); S.mode=b.dataset.mode;
-  $("q").placeholder=S.mode==="ask"?"e.g. revenue per product category this year"
-                                   :"SELECT region, count(*) FROM orders GROUP BY 1";
-});
+/* ------------------------------------------------------------ cells */
+const KIND_LABEL={sql:"SQL",ask:"Question",md:"Text"};
+const PLACEHOLDER={sql:"SELECT region, count(*) AS orders FROM orders GROUP BY 1",
+                   ask:"e.g. revenue per product category this year",
+                   md:"Narration in markdown: # heading, **bold**, - lists"};
 
-$("q").onkeydown=e=>{ if((e.metaKey||e.ctrlKey)&&e.key==="Enter") $("runBtn").click(); };
+function addCell(kind,focus=true,after=null){
+  const c={id:uid(),kind,title:"",text:"",chart:{type:"auto",view:"chart"}};
+  const i=after?S.nb.cells.findIndex(x=>x.id===after)+1:S.nb.cells.length;
+  S.nb.cells.splice(i,0,c); renderAll(); saveDraft();
+  if(focus) document.querySelector(`[data-id="${c.id}"] textarea`)?.focus();
+}
+function cell(id){ return S.nb.cells.find(c=>c.id===id); }
+function removeCell(id){ S.nb.cells=S.nb.cells.filter(c=>c.id!==id); delete S.results[id]; renderAll(); saveDraft(); }
+function moveCell(id,dir){
+  const i=S.nb.cells.findIndex(c=>c.id===id), j=i+dir; if(j<0||j>=S.nb.cells.length) return;
+  [S.nb.cells[i],S.nb.cells[j]]=[S.nb.cells[j],S.nb.cells[i]]; renderAll(); saveDraft();
+}
+function setKind(id,kind){ const c=cell(id); c.kind=kind; delete S.results[id]; renderCell(id); saveDraft(); }
 
-$("runBtn").onclick=async()=>{
-  const text=$("q").value.trim(); if(!text) return;
-  touch(); $("runBtn").disabled=true; $("csvBtn").classList.add("hide");
-  $("out").innerHTML=`<div class="dim" style="margin-top:12px">${S.mode==="ask"?"the agent is writing a query":"running"} <span class="spin"></span></div>`;
-  try{
-    const body=S.mode==="ask"?{question:text}:{sql:text};
-    S.last=await api(S.mode==="ask"?"/ask":"/sql",{method:"POST",body});
-    render(S.last); $("csvBtn").classList.remove("hide");
-  }catch(err){
-    const kind=err.status===403?"Not allowed":err.status===401?"Session ended":"Error";
-    $("out").innerHTML=`<div class="banner bad"><b>${kind}.</b> ${esc(err.message)}</div>`;
-    if(err.status===401) setTimeout(logout,1200);
-  }
-  $("runBtn").disabled=false;
-};
-
-function render(r){
-  if(r.answer!==null && r.answer!==undefined && !r.sql){
-    $("out").innerHTML=`<div class="dim" style="margin-top:12px">from the schema</div><pre>${esc(r.answer)}</pre>`
-      +`<div class="dim" style="margin-top:8px">audit #${r.audit_id}</div>`;
-    return;
-  }
-  const notes=[]; if(r.attempts>1) notes.push(`${r.attempts} attempts`);
-  $("out").innerHTML=
-    (S.mode==="ask"?`<div class="dim" style="margin-top:12px">the agent wrote</div><pre>${esc(r.sql)}</pre>`:"")
-    + `<table><thead><tr>${r.columns.map(c=>`<th>${esc(c)}</th>`).join("")}</tr></thead><tbody>`
-    + r.rows.slice(0,500).map(row=>`<tr>${row.map(v=>`<td>${esc(v)}</td>`).join("")}</tr>`).join("")
-    + `</tbody></table><div class="dim" style="margin-top:8px">${r.row_count} row(s) · ${r.duration_ms} ms · audit #${r.audit_id}${notes.length?" · "+esc(notes.join(" · ")):""}</div>`;
+function renderAll(){
+  const host=$("cells"); host.innerHTML="";
+  if(!S.nb.cells.length){ host.innerHTML=`<div class="empty">Add a cell below to get started.</div>`; return; }
+  for(const c of S.nb.cells){ const el=document.createElement("div"); el.className="cell"; el.dataset.id=c.id; host.appendChild(el); renderCell(c.id); }
 }
 
-$("csvBtn").onclick=()=>{
-  const r=S.last, q=v=>`"${String(v??"").replace(/"/g,'""')}"`;
-  const blob=new Blob([[r.columns.map(q).join(","),...r.rows.map(x=>x.map(q).join(","))].join("\n")],{type:"text/csv"});
-  const a=document.createElement("a"); a.href=URL.createObjectURL(blob); a.download="escrowe.csv"; a.click();
-};
+function renderCell(id){
+  const c=cell(id), el=document.querySelector(`[data-id="${id}"]`); if(!c||!el) return;
+  const r=S.results[id];
+  el.className="cell"+(r&&r.wide?" wide":"");
+  el.innerHTML=`
+    <div class="head">
+      <select class="kind ${c.kind}" onchange="setKind('${id}',this.value)" title="Cell type">
+        ${Object.entries(KIND_LABEL).map(([k,v])=>`<option value="${k}"${k===c.kind?" selected":""}>${v}</option>`).join("")}
+      </select>
+      <input class="title" placeholder="${c.kind==="md"?"Section":"Title"}" value="${esc(c.title)}"
+             oninput="cell('${id}').title=this.value;saveDraft()">
+      <div class="tools">
+        ${c.kind!=="md"?`<button class="sm" onclick="runCell('${id}')" title="Run (⌘/Ctrl+Enter)">Run</button>`:""}
+        <button class="icon" onclick="moveCell('${id}',-1)" title="Move up">↑</button>
+        <button class="icon" onclick="moveCell('${id}',1)" title="Move down">↓</button>
+        <button class="icon" onclick="addCell('${c.kind}',true,'${id}')" title="Add a cell below">+</button>
+        <button class="icon" onclick="removeCell('${id}')" title="Delete cell">✕</button>
+      </div>
+    </div>
+    <div class="editor">
+      <textarea class="${c.kind==="sql"?"code":""}" placeholder="${esc(PLACEHOLDER[c.kind])}"
+        oninput="onEdit('${id}',this)" onkeydown="if((event.metaKey||event.ctrlKey)&&event.key==='Enter'){event.preventDefault();runCell('${id}')}"></textarea>
+    </div>
+    <div class="out"></div>`;
+  const ta=el.querySelector("textarea"); ta.value=c.text; autosize(ta);
+  renderOut(id);
+}
+function autosize(ta){ ta.style.height="auto"; ta.style.height=Math.min(Math.max(ta.scrollHeight+2,74),420)+"px"; }
+function onEdit(id,ta){ const c=cell(id); c.text=ta.value; autosize(ta); if(c.kind==="md") renderOut(id); saveDraft(); }
+
+/* ---------------------------------------------------------- running */
+async function runCell(id){
+  const c=cell(id), el=document.querySelector(`[data-id="${id}"]`); if(!c||c.kind==="md") return;
+  const text=c.text.trim(); if(!text) return;
+  touch(); el.classList.add("running");
+  el.querySelector(".out").innerHTML=`<div class="dim">${c.kind==="ask"?"the agent is writing a query":"running"} <span class="spin"></span></div>`;
+  try{
+    const r=await api(c.kind==="ask"?"/ask":"/sql",{method:"POST",body:c.kind==="ask"?{question:text}:{sql:text}});
+    S.results[id]=analyze(r);
+  }catch(err){
+    const kind=err.status===403?"Not allowed":err.status===401?"Session ended":"Error";
+    S.results[id]={error:`<b>${kind}.</b> ${esc(err.message)}`};
+    if(err.status===401) setTimeout(logout,1200);
+  }
+  el.classList.remove("running"); renderOut(id);
+}
+async function runAll(){
+  $("runAllBtn").disabled=true;
+  for(const c of S.nb.cells) if(c.kind!=="md"&&c.text.trim()) await runCell(c.id);
+  $("runAllBtn").disabled=false;
+}
+$("runAllBtn").onclick=runAll;
+
+/* ---------------------------------------------------- shape analysis */
+const DATE_RE=/^\d{4}-\d{2}-\d{2}([T ]\d{2}:\d{2}(:\d{2}(\.\d+)?)?)?(Z|[+-]\d{2}:?\d{2})?$/;
+const NUM_RE=/^-?\d+(\.\d+)?([eE][+-]?\d+)?$/, ID_RE=/^(id|.*_id|.*id)$/i;
+function classify(vals){
+  const v=vals.filter(x=>x!==null&&x!==undefined&&x!=="");
+  if(!v.length) return "empty";
+  if(v.every(x=>typeof x==="number")) return "number";
+  if(v.every(x=>typeof x==="boolean")) return "bool";
+  if(v.every(x=>typeof x==="string"&&NUM_RE.test(x))) return "numstr";
+  if(v.every(x=>typeof x==="string"&&DATE_RE.test(x))||v.every(x=>x instanceof Date)) return "date";
+  return "text";
+}
+// Turn a /sql or /ask response into: typed columns, row objects, and a chart suggestion.
+function analyze(r){
+  if(r.answer!=null&&!r.sql) return {answer:r.answer,audit_id:r.audit_id,attempts:r.attempts};
+  const cols=r.columns.map((name,i)=>{
+    const raw=r.rows.slice(0,1000).map(row=>row[i]); let type=classify(raw);
+    if(type==="numstr") type="number";
+    if(type==="number"&&ID_RE.test(name)) type="id";      // an identifier is not a measure
+    const distinct=new Set(raw.map(String)).size;
+    return {name,type,distinct};
+  });
+  const data=r.rows.map(row=>{ const o={}; cols.forEach((c,i)=>{ let v=row[i];
+    if(v!=null&&c.type==="number"&&typeof v!=="number") v=Number(v);
+    if(v!=null&&c.type==="date"&&!(v instanceof Date)) v=new Date(String(v).replace(" ","T"));
+    o[c.name]=v; }); return o; });
+  const res={sql:r.sql,columns:cols,rows:r.rows,data,row_count:r.row_count,duration_ms:r.duration_ms,
+             audit_id:r.audit_id,attempts:r.attempts,note:r.note};
+  res.suggest=suggest(res); res.wide=res.suggest.type==="table"&&cols.length>4;
+  return res;
+}
+function suggest(res){
+  const cols=res.columns, n=res.data.length, by=t=>cols.filter(c=>c.type===t);
+  const nums=by("number"), dates=by("date"), texts=[...by("text"),...by("bool")].sort((a,b)=>a.distinct-b.distinct);
+  if(n===0) return {type:"table"};
+  if(n===1&&nums.length&&nums.length===cols.length) return {type:"stat"};
+  if(n===1&&nums.length&&cols.length<=4) return {type:"stat"};
+  if(dates.length&&nums.length){
+    const s={type:"line",x:dates[0].name,y:nums[0].name};
+    const cat=texts.find(t=>t.distinct>1&&t.distinct<=8); if(cat) s.color=cat.name; return s;
+  }
+  if(texts.length&&nums.length){
+    const cat=texts.find(t=>t.distinct<=40)||null;
+    if(cat){ const s={type:"bar",x:cat.name,y:nums[0].name};
+      const c2=texts.find(t=>t!==cat&&t.distinct>1&&t.distinct<=8); if(c2) s.color=c2.name; return s; }
+  }
+  if(nums.length>=2&&!texts.length&&!dates.length){
+    const s={type:"scatter",x:nums[0].name,y:nums[1].name}; if(nums[2]) s.size=nums[2].name; return s;
+  }
+  if(nums.length>=2){ const s={type:"scatter",x:nums[0].name,y:nums[1].name};
+    const cat=texts.find(t=>t.distinct>1&&t.distinct<=8); if(cat) s.color=cat.name; return s; }
+  return {type:"table"};
+}
+// The effective chart spec: manual overrides win over the suggestion, field by field.
+function spec(c,res){
+  const cfg=c.chart||{}, s=res.suggest||{type:"table"};
+  const type=cfg.type&&cfg.type!=="auto"?cfg.type:s.type;
+  const pick=k=>cfg[k]!==undefined?(cfg[k]||null):(cfg.type&&cfg.type!=="auto"?null:s[k]||null);
+  let x=pick("x"),y=pick("y");
+  if(type!=="stat"&&type!=="table"&&(!x||!y)){    // a manual type with no axes: fill sensibly
+    const nums=res.columns.filter(k=>k.type==="number"), other=res.columns.filter(k=>k.type!=="number");
+    x=x||(type==="scatter"?nums[0]?.name:(other[0]||res.columns[0])?.name);
+    y=y||(nums.find(k=>k.name!==x)||res.columns.find(k=>k.name!==x))?.name;
+  }
+  return {type,x,y,color:pick("color"),size:pick("size")};
+}
+
+/* --------------------------------------------------------- rendering */
+function renderOut(id){
+  const c=cell(id), el=document.querySelector(`[data-id="${id}"]`), out=el.querySelector(".out"); if(!c) return;
+  const r=S.results[id];
+  el.classList.toggle("wide",!!(r&&r.wide));
+  if(c.kind==="md"){ out.innerHTML=`<div class="prose">${markdown(c.text)}</div>`; return; }
+  if(!r){ out.innerHTML=S.present?`<div class="dim">not run yet</div>`:""; return; }
+  if(r.error){ out.innerHTML=`<div class="banner bad">${r.error}</div>`; return; }
+  if(r.answer!==undefined){
+    out.innerHTML=`<div class="dim sqlnote">from the schema</div><pre>${esc(r.answer)}</pre>
+      <div class="meta dim">audit #${r.audit_id}</div>`; return;
+  }
+  const sp=spec(c,r), view=c.chart?.view||"chart", canChart=HAS_PLOT||sp.type==="stat"||sp.type==="table";
+  const showChart=view==="chart"&&sp.type!=="table"&&canChart;
+  const notes=[]; if(r.attempts>1) notes.push(`${r.attempts} attempts`);
+  out.innerHTML=
+    (c.kind==="ask"?`<details class="sqlnote"><summary class="dim" style="cursor:pointer">the agent wrote</summary><pre>${esc(r.sql)}</pre></details>`:"")
+    + (r.note?`<div class="banner warn">${esc(r.note)}</div>`:"")
+    + `<div class="body"></div>`
+    + `<div class="meta">
+        <span class="viewsw tabs" style="margin:0">
+          <button class="${showChart?"on":""}" onclick="setView('${id}','chart')"${sp.type==="table"||!canChart?" disabled":""}>Chart</button>
+          <button class="${!showChart?"on":""}" onclick="setView('${id}','table')">Table</button>
+        </span>
+        <button class="ghost sm" onclick="toggleCfg('${id}')">⚙ chart</button>
+        <span class="dim">${r.row_count} row(s) · ${r.duration_ms} ms · audit #${r.audit_id}${notes.length?" · "+esc(notes.join(" · ")):""}
+          ${!HAS_PLOT?" · charts unavailable offline":""}</span>
+        <span class="spacer"></span>
+        <button class="ghost sm" onclick="downloadCsv('${id}')">CSV</button>
+       </div>
+       <div class="cfg hide"></div>`;
+  const body=out.querySelector(".body");
+  if(showChart) drawChart(body,r,sp,c); else body.appendChild(tableEl(r));
+  if(c._cfgOpen) toggleCfg(id,true);
+}
+function setView(id,v){ const c=cell(id); c.chart={...(c.chart||{}),view:v}; renderOut(id); saveDraft(); }
+function tableEl(r){
+  const t=document.createElement("table");
+  t.innerHTML=`<thead><tr>${r.columns.map(c=>`<th>${esc(c.name)}</th>`).join("")}</tr></thead><tbody>`
+    + r.rows.slice(0,500).map(row=>`<tr>${row.map((v,i)=>`<td class="${r.columns[i].type==="number"?"num":""}">${esc(v)}</td>`).join("")}</tr>`).join("")
+    + `</tbody>`;
+  return t;
+}
+function downloadCsv(id){
+  const r=S.results[id], q=v=>`"${String(v??"").replace(/"/g,'""')}"`;
+  const blob=new Blob([[r.columns.map(c=>q(c.name)).join(","),...r.rows.map(x=>x.map(q).join(","))].join("\n")],{type:"text/csv"});
+  const a=document.createElement("a"); a.href=URL.createObjectURL(blob); a.download=(cell(id).title||"escrowe")+".csv"; a.click();
+}
+
+// Manual override panel: chart type and which column feeds x / y / color / size.
+function toggleCfg(id,force){
+  const c=cell(id), r=S.results[id], el=document.querySelector(`[data-id="${id}"] .cfg`); if(!r||!el) return;
+  const open=force===true?true:el.classList.contains("hide"); c._cfgOpen=open;
+  el.classList.toggle("hide",!open); if(!open) return;
+  const cfg=c.chart||{}, sp=spec(c,r), types=["auto","bar","line","area","scatter","stat","table"];
+  const opt=(cur,allowNone)=>(allowNone?`<option value="">–</option>`:"")+r.columns.map(k=>
+    `<option value="${esc(k.name)}"${k.name===cur?" selected":""}>${esc(k.name)} (${k.type})</option>`).join("");
+  el.innerHTML=`
+    <div><label>Chart</label><select onchange="setCfg('${id}','type',this.value)">
+      ${types.map(t=>`<option value="${t}"${(cfg.type||"auto")===t?" selected":""}>${t==="auto"?"auto ("+sp.type+")":t}</option>`).join("")}</select></div>
+    <div><label>X</label><select onchange="setCfg('${id}','x',this.value)">${opt(sp.x,true)}</select></div>
+    <div><label>Y</label><select onchange="setCfg('${id}','y',this.value)">${opt(sp.y,true)}</select></div>
+    <div><label>Color</label><select onchange="setCfg('${id}','color',this.value)">${opt(sp.color,true)}</select></div>
+    <div><label>Size</label><select onchange="setCfg('${id}','size',this.value)">${opt(sp.size,true)}</select></div>
+    <div style="align-self:end"><button class="ghost sm" onclick="setCfg('${id}',null)">Reset to auto</button></div>`;
+}
+function setCfg(id,k,v){
+  const c=cell(id);
+  if(k===null) c.chart={type:"auto",view:c.chart?.view||"chart"};
+  else if(k==="type"){ const sp=spec(c,S.results[id]); c.chart={...(c.chart||{}),type:v}; if(v!=="auto"){ c.chart.x=sp.x; c.chart.y=sp.y; c.chart.color=sp.color; c.chart.size=sp.size; } }
+  else{ const sp=spec(c,S.results[id]); c.chart={...(c.chart||{}),type:c.chart?.type&&c.chart.type!=="auto"?c.chart.type:sp.type,
+          x:sp.x,y:sp.y,color:sp.color,size:sp.size,[k]:v||null}; }
+  c.chart.view="chart"; renderOut(id); saveDraft();
+}
+
+/* ------------------------------------------------------------ charts */
+const cssVar=n=>getComputedStyle(document.documentElement).getPropertyValue(n).trim();
+const fmtNum=v=>v==null?"":typeof v!=="number"?String(v):Math.abs(v)>=1e6?Intl.NumberFormat(undefined,{notation:"compact",maximumFractionDigits:2}).format(v)
+                 :Number.isInteger(v)?v.toLocaleString():v.toLocaleString(undefined,{maximumFractionDigits:2});
+
+function drawChart(host,r,sp,c){
+  host.innerHTML="";
+  if(sp.type==="stat"){
+    const row=r.data[0]||{}, cols=r.columns.filter(k=>k.type==="number"), show=cols.length?cols:r.columns;
+    host.innerHTML=`<div class="stats">${show.slice(0,6).map(k=>`<div class="stat"><div class="v">${esc(fmtNum(row[k.name]))}</div><div class="l">${esc(k.name)}</div></div>`).join("")}</div>`;
+    return;
+  }
+  if(!HAS_PLOT){ host.appendChild(tableEl(r)); return; }
+  const series=[1,2,3,4,5,6,7,8].map(i=>cssVar("--s"+i));
+  const width=Math.max(280,host.clientWidth||host.parentElement.clientWidth||600);
+  const col=n=>r.columns.find(k=>k.name===n);
+  const data=r.data, xs=col(sp.x), ys=col(sp.y);
+  if(!xs||!ys){ host.innerHTML=`<div class="dim">Pick an X and a Y column.</div>`; return; }
+  const marks=[], o={x:{label:sp.x},y:{label:sp.y,grid:true},width,height:280,marginLeft:56,
+                     style:{background:"transparent",color:cssVar("--dim"),fontSize:"11px"},
+                     color:sp.color?{legend:true,range:series}:undefined};
+  const tipOpts={x:sp.x,y:sp.y,...(sp.color?{stroke:sp.color}:{})};
+  try{
+    if(sp.type==="bar"){
+      const cats=[...new Set(data.map(d=>String(d[sp.x])))];          // keep the query's own order
+      const horizontal=cats.length>8||cats.some(s=>s.length>12);
+      if(horizontal){
+        o.y={label:sp.x,domain:cats}; o.x={label:sp.y,grid:true}; o.marginLeft=Math.min(200,12+7*Math.max(...cats.map(s=>s.length)));
+        o.height=Math.max(140,26*cats.length+50);
+        marks.push(Plot.barX(data,{y:d=>String(d[sp.x]),x:sp.y,fill:sp.color||series[0],insetTop:1,insetBottom:1,tip:true}));
+        marks.push(Plot.ruleX([0],{stroke:cssVar("--line")}));
+      }else{
+        o.x={label:sp.x,domain:cats};
+        marks.push(Plot.barY(data,{x:d=>String(d[sp.x]),y:sp.y,fill:sp.color||series[0],insetLeft:1,insetRight:1,tip:true}));
+        marks.push(Plot.ruleY([0],{stroke:cssVar("--line")}));
+      }
+    }else if(sp.type==="line"||sp.type==="area"){
+      const sorted=[...data].sort((a,b)=>d3.ascending(a[sp.x],b[sp.x]));
+      if(sp.type==="area") marks.push(Plot.areaY(sorted,{x:sp.x,y:sp.y,fill:sp.color||series[0],fillOpacity:.25,z:sp.color}));
+      marks.push(Plot.lineY(sorted,{x:sp.x,y:sp.y,stroke:sp.color||series[0],strokeWidth:2,z:sp.color}));
+      if(sorted.length<=60) marks.push(Plot.dot(sorted,{x:sp.x,y:sp.y,fill:sp.color||series[0],r:3}));
+      marks.push(Plot.tip(sorted,Plot.pointerX(tipOpts)));
+    }else{ // scatter
+      marks.push(Plot.dot(data,{x:sp.x,y:sp.y,stroke:sp.color||series[0],fill:sp.color||series[0],fillOpacity:.35,
+                                r:sp.size?sp.size:4,tip:true}));
+      if(sp.size) o.r={range:[3,18]};
+    }
+    const fig=Plot.plot({...o,marks}); host.appendChild(fig);
+    fig.querySelectorAll('[aria-label$="grid"] line').forEach(l=>l.setAttribute("stroke",cssVar("--grid")));
+  }catch(e){ host.innerHTML=`<div class="banner bad">Could not chart this: ${esc(e.message)}</div>`; host.appendChild(tableEl(r)); }
+}
+let rrT; function rerenderCharts(){ clearTimeout(rrT); rrT=setTimeout(()=>S.nb.cells.forEach(c=>S.results[c.id]&&renderOut(c.id)),120); }
+window.addEventListener("resize",rerenderCharts);
+matchMedia("(prefers-color-scheme: dark)").addEventListener?.("change",rerenderCharts);
+
+/* ---------------------------------------------------------- markdown */
+function inline(s){
+  return esc(s).replace(/`([^`]+)`/g,"<code>$1</code>").replace(/\*\*([^*]+)\*\*/g,"<b>$1</b>")
+    .replace(/(^|[^*])\*([^*]+)\*/g,"$1<i>$2</i>")
+    .replace(/\[([^\]]+)\]\((https?:\/\/[^)\s]+)\)/g,'<a href="$2" target="_blank" rel="noopener">$1</a>');
+}
+function markdown(src){
+  const out=[]; let list=null, para=[];
+  const flush=()=>{ if(para.length){ out.push(`<p>${inline(para.join(" "))}</p>`); para=[]; } if(list){ out.push(`<ul>${list}</ul>`); list=null; } };
+  for(const line of (src||"").split("\n")){
+    const h=line.match(/^(#{1,3})\s+(.*)/), li=line.match(/^\s*[-*]\s+(.*)/);
+    if(h){ flush(); out.push(`<h${h[1].length}>${inline(h[2])}</h${h[1].length}>`); }
+    else if(li){ if(para.length){ out.push(`<p>${inline(para.join(" "))}</p>`); para=[]; } list=(list||"")+`<li>${inline(li[1])}</li>`; }
+    else if(!line.trim()) flush();
+    else { if(list){ out.push(`<ul>${list}</ul>`); list=null; } para.push(line); }
+  }
+  flush(); return out.join("")||`<span class="dim">Write some text.</span>`;
+}
+
+/* ------------------------------------------------------ present mode */
+function setPresent(on){
+  S.present=on; document.body.classList.toggle("present",on);
+  $("presentBtn").textContent=on?"Edit":"Present";
+  S.nb.cells.forEach(c=>c._cfgOpen=false);
+  renderAll();
+}
+$("presentBtn").onclick=()=>setPresent(!S.present);
+document.addEventListener("keydown",e=>{ if(e.key==="Escape"&&S.present) setPresent(false); });
+
+/* ------------------------------------------------------- persistence */
+// What goes to disk: cell definitions only - never the cached results.
+function cleanCells(){ return S.nb.cells.map(c=>{ const {type,x,y,color,size,view}=c.chart||{};
+  return {id:c.id,kind:c.kind,title:c.title||"",text:c.text||"",chart:{type:type||"auto",x,y,color,size,view:view||"chart"}}; }); }
+let draftT; function saveDraft(){ clearTimeout(draftT); draftT=setTimeout(()=>{
+  try{ localStorage.setItem(DRAFT_KEY,JSON.stringify({name:$("nbName").value,cells:cleanCells()})); }catch{} },300); }
+function loadDraft(){
+  try{ const d=JSON.parse(localStorage.getItem(DRAFT_KEY)||"null"); if(d?.cells?.length){ S.nb.cells=d.cells; $("nbName").value=d.name||""; } }catch{}
+}
+$("nbName").oninput=saveDraft;
+
+async function saveNotebook(){
+  const name=$("nbName").value.trim();
+  if(!name){ $("nbName").focus(); $("saveMsg").textContent="name it first"; return; }
+  $("saveMsg").innerHTML=`saving <span class="spin"></span>`;
+  try{ const d=await api("/notebooks/"+encodeURIComponent(name),{method:"PUT",body:{cells:cleanCells()}});
+    $("saveMsg").textContent=`saved ${d.saved_at.slice(11,16)}`; }
+  catch(e){ $("saveMsg").innerHTML=`<span style="color:var(--bad)">${esc(e.message)}</span>`; }
+}
+$("saveBtn").onclick=saveNotebook;
+document.addEventListener("keydown",e=>{ if((e.metaKey||e.ctrlKey)&&e.key==="s"&&S.token){ e.preventDefault(); saveNotebook(); } });
+
+async function openNotebook(name){
+  const d=await api("/notebooks/"+encodeURIComponent(name));
+  S.nb={name,cells:d.cells.map(c=>({...c,chart:c.chart||{type:"auto",view:"chart"}}))}; S.results={};
+  $("nbName").value=name; $("saveMsg").textContent=""; closeModal(); renderAll(); saveDraft();
+  await runAll();                                    // saved notebooks hold no data: rerun fresh
+}
+async function openList(){
+  openModal(`<h1 style="font-size:16px;margin:0 0 4px">Notebooks</h1>
+    <div class="dim">Saved on this machine, in escrowe's home folder. Cells only - results are fetched fresh when opened.</div>
+    <div id="nbList" style="margin-top:12px" class="dim">loading…</div>
+    <div class="row" style="margin-top:14px"><button class="ghost" onclick="closeModal()">Close</button></div>`);
+  try{
+    const d=await api("/notebooks");
+    $("nbList").innerHTML=d.notebooks.length?d.notebooks.map(n=>`<div class="nbrow">
+        <b>${esc(n.name)}</b><span class="chip">${n.cells} cells</span><span class="dim">${esc((n.saved_at||"").replace("T"," ").slice(0,16))}</span>
+        <span class="spacer"></span>
+        <button class="sm" onclick="openNotebook('${esc(n.name)}')">Open</button>
+        <button class="ghost sm" onclick="deleteNotebook('${esc(n.name)}')">Delete</button></div>`).join("")
+      :`<div class="dim">No notebooks saved yet. Name this one in the header and press Save.</div>`;
+  }catch(e){ $("nbList").innerHTML=`<div class="banner bad">${esc(e.message)}</div>`; }
+}
+async function deleteNotebook(name){
+  if(!confirm(`Delete notebook "${name}"?`)) return;
+  await api("/notebooks/"+encodeURIComponent(name),{method:"DELETE"}); openList();
+}
+$("openBtn").onclick=openList;
 
 /* ----------------------------------------------------------- connect */
 function dbFields(p,port){return `<div class="grid2">
@@ -241,7 +633,7 @@ function openConnect(){
       <button class="on" data-c="form">Fill in details</button><button data-c="dsn">Paste a connection string</button></div>
     <div id="cForm">
       <label>Type</label>
-      <select id="kind"><option value="mysql">MySQL</option></select>
+      <select id="kind" style="width:100%;padding:9px 10px;font-size:inherit"><option value="mysql">MySQL</option></select>
       <label>Name in SQL</label><input id="sname" value="mysql">
       <div id="kindFields"></div>
     </div>
@@ -290,7 +682,7 @@ async function listSources(){
       `<div class="row" style="padding:6px 0;border-top:1px solid var(--line)">
         <b>${esc(s.name)}</b><span class="chip">${esc(s.kind)}</span>
         <span class="spacer"></span>
-        <button class="ghost" onclick="detach('${esc(s.name)}')" style="padding:3px 9px">Remove</button></div>`).join("")
+        <button class="ghost sm" onclick="detach('${esc(s.name)}')">Remove</button></div>`).join("")
       : `<div class="dim">nothing yet</div>`);
   }catch(e){ $("cList").innerHTML=`<div class="dim">${esc(e.message)}</div>`; }
 }
@@ -314,9 +706,12 @@ function closeModal(){ $("overlay").classList.add("hide"); }
 $("overlay").onclick=e=>{ if(e.target.id==="overlay") closeModal(); };
 $("connBtn").onclick=openConnect; $("auditBtn").onclick=openAudit; $("outBtn").onclick=()=>logout();
 
+// Logging out drops the token and every cached result; the cell definitions
+// stay (and live on in the local draft), so logging back in doesn't lose work.
 async function logout(){
-  try{ await api("/logout",{method:"POST"}); }catch{}
-  S={token:null,user:null,mode:S.mode,last:null,idleAt:0};
+  if(S.token){ try{ await api("/logout",{method:"POST"}); }catch{} }
+  S={...S,token:null,user:null,operator:false,idleAt:0,results:{}};
+  if(S.present) setPresent(false);
   closeModal(); $("app").classList.add("hide"); $("gate").classList.remove("hide"); gateInfo(); $("lu").focus();
 }
 
@@ -329,7 +724,7 @@ setInterval(()=>{
 },5000);
 ["click","keydown"].forEach(ev=>document.addEventListener(ev,touch));
 
-gateInfo(); $("lu").focus();
+boot();
 </script>
 </body>
 </html>

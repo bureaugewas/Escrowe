@@ -364,7 +364,10 @@ def browser_ui(port: int = 8765) -> None:
     url = f"http://127.0.0.1:{port}"
     console.print(f"{NAME} interface  {url}   (ctrl-c to stop)")
     threading.Timer(1.0, lambda: webbrowser.open(url)).start()
-    uvicorn.run(create_app(svc), host="127.0.0.1", port=port, log_level="warning")
+    # Loopback only, and requests without a token run as the operator - the same
+    # no-separate-login mode the REPL is in. Someone can still log in as another
+    # account from the UI; that's the /login flow, kept for when it's wanted.
+    uvicorn.run(create_app(svc, local_operator=True), host="127.0.0.1", port=port, log_level="warning")
 
 
 # ================================================================== the REPL

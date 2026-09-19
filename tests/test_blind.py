@@ -14,7 +14,7 @@ class RecordingAgent(Agent):
         self.scripted = list(scripted)
         self.seen = []           # every (system, user) prompt the agent was shown
 
-    def _ask(self, system, user):
+    def _ask(self, system, user, on_token=None):
         self.seen.append(system + "\n" + user)
         return self.scripted.pop(0) if self.scripted else '{"refusal": "out of ideas"}'
 
@@ -58,7 +58,7 @@ def test_agent_result_never_contains_rows_type():
     """AgentResult must stay incapable of carrying data back from a query.
     Adding a field here is fine; adding one that could hold rows is not."""
     fields = AgentResult.__dataclass_fields__
-    assert set(fields) == {"sql", "refusal", "answer", "probe", "provider", "attempts", "needs_login"}
+    assert set(fields) == {"sql", "refusal", "answer", "probe", "note", "provider", "attempts", "needs_login"}
     assert all(f.type in ("str | None", "str", "bool", "list[Attempt]") for f in fields.values()), \
         {n: f.type for n, f in fields.items()}
 
@@ -121,7 +121,7 @@ def test_a_failed_call_is_still_recorded(svc, alice):
     from escrowe.transcript import Transcript, default_path
 
     class Broken(Agent):
-        def _ask(self, system, user):
+        def _ask(self, system, user, on_token=None):
             raise RuntimeError("provider exploded")
 
     svc.agent = Broken("mock")
