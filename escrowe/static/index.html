@@ -487,7 +487,7 @@ function spec(c,res){
     x=x||(type==="scatter"?nums[0]?.name:(dates[0]||other[0]||res.columns[0])?.name);
     y=y||(nums.find(k=>k.name!==x)||res.columns.find(k=>k.name!==x))?.name;
   }
-  return {type,x,y,color:pick("color"),size:pick("size")};
+  return {type,x,y,color:pick("color"),size:pick("size"),orient:cfg.orient||"auto"};
 }
 
 /* --------------------------------------------------------- rendering */
@@ -558,6 +558,12 @@ function toggleCfg(id,force){
         `<label class="chip-check"><input type="checkbox" value="${esc(k.name)}" onchange="toggleY('${id}',this)"
            ${yArr.includes(k.name)?"checked":""}> ${esc(k.name)}</label>`).join("")}</div></div>`
     :`<div><label>Y</label><select onchange="setCfg('${id}','y',this.value)">${opt(sp.y,true)}</select></div>`;
+  const orientControl=sp.type==="bar"?`<div><label>Orientation</label>
+      <select onchange="setCfg('${id}','orient',this.value)">
+        <option value="auto"${sp.orient==="auto"?" selected":""}>auto</option>
+        <option value="vertical"${sp.orient==="vertical"?" selected":""}>vertical (categories on x)</option>
+        <option value="horizontal"${sp.orient==="horizontal"?" selected":""}>horizontal (categories on y)</option>
+      </select></div>`:"";
   el.innerHTML=`
     <div><label>Chart</label><select onchange="setCfg('${id}','type',this.value)">
       ${types.map(t=>`<option value="${t}"${(cfg.type||"auto")===t?" selected":""}>${t==="auto"?"auto ("+sp.type+")":t}</option>`).join("")}</select></div>
@@ -565,6 +571,7 @@ function toggleCfg(id,force){
     ${yControl}
     ${multiSeries&&yArr.length>1?"":`<div><label>Color</label><select onchange="setCfg('${id}','color',this.value)">${opt(sp.color,true)}</select></div>`}
     <div><label>Size</label><select onchange="setCfg('${id}','size',this.value)">${opt(sp.size,true)}</select></div>
+    ${orientControl}
     <div style="align-self:end"><button class="ghost sm" onclick="setCfg('${id}',null)">Reset to auto</button></div>`;
 }
 function toggleY(id,el){
@@ -573,7 +580,7 @@ function toggleY(id,el){
     .filter(cb=>cb.checked).map(cb=>cb.value);
   c.chart={...(c.chart||{}), type:c.chart?.type&&c.chart.type!=="auto"?c.chart.type:sp.type,
            x:sp.x, y:chosen.length?(chosen.length===1?chosen[0]:chosen):null, color:null, size:sp.size, view:"chart"};
-  renderOut(id); saveDraft();
+  renderOut(id); saveDraft(); if(c._cfgOpen) toggleCfg(id,true);
 }
 function setCfg(id,k,v){
   const c=cell(id);
@@ -586,7 +593,7 @@ function setCfg(id,k,v){
   }
   else{ const sp=spec(c,S.results[id]); c.chart={...(c.chart||{}),type:c.chart?.type&&c.chart.type!=="auto"?c.chart.type:sp.type,
           x:sp.x,y:sp.y,color:sp.color,size:sp.size,[k]:v||null}; }
-  c.chart.view="chart"; renderOut(id); saveDraft();
+  c.chart.view="chart"; renderOut(id); saveDraft(); if(c._cfgOpen) toggleCfg(id,true);
 }
 
 /* ------------------------------------------------------------ charts */
@@ -619,14 +626,20 @@ function drawChart(host,r,sp,c){
   try{
     if(sp.type==="bar"){
       const cats=[...new Set(data.map(d=>catLabel(d[sp.x])))];        // keep the query's own order
-      const horizontal=cats.length>8||cats.some(s=>s.length>12);
+      const horizontal=sp.orient==="vertical"?false:sp.orient==="horizontal"?true
+                       :(cats.length>8||cats.some(s=>s.length>12));   // auto: guess from category count/length
       if(horizontal){
         o.y={label:sp.x,domain:cats}; o.x={label:sp.y,grid:true}; o.marginLeft=Math.min(200,12+7*Math.max(...cats.map(s=>s.length)));
         o.height=Math.max(140,26*cats.length+50);
         marks.push(Plot.barX(data,{y:d=>catLabel(d[sp.x]),x:sp.y,fill:sp.color||series[0],insetTop:1,insetBottom:1,tip:true}));
         marks.push(Plot.ruleX([0],{stroke:cssVar("--line")}));
       }else{
-        o.x={label:sp.x,domain:cats};
+        // Forced vertical with many/long categories: rotate the labels so they
+        // don't collide - the auto path would have gone horizontal for this,
+        // but a person overriding it still needs to be able to read the axis.
+        const crowded=cats.length>8||cats.some(s=>s.length>10);
+        o.x={label:sp.x,domain:cats,...(crowded?{tickRotate:-40}:{})};
+        if(crowded) o.marginBottom=Math.min(140,50+3*Math.max(...cats.map(s=>s.length)));
         marks.push(Plot.barY(data,{x:d=>catLabel(d[sp.x]),y:sp.y,fill:sp.color||series[0],insetLeft:1,insetRight:1,tip:true}));
         marks.push(Plot.ruleY([0],{stroke:cssVar("--line")}));
       }
