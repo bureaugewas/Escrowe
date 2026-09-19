@@ -58,22 +58,38 @@
              border-radius:20px;padding:3px 11px 3px 8px;font-size:12px;cursor:pointer;user-select:none}
   .chip-check input{width:auto;margin:0}
   .spacer{flex:1}
-  main{display:grid;grid-template-columns:270px 1fr;gap:14px;padding:14px 16px;align-items:start}
-  .sidebarcol{display:flex;flex-direction:column;gap:14px}
+  main{display:flex;padding:14px 16px;align-items:flex-start}
+  .sidebarcol{display:flex;flex-direction:column;gap:14px;flex:0 0 270px;width:270px;min-width:180px;max-width:560px;overflow:hidden}
+  .sidebarcol.hide{display:none}
+  .resizer{flex:0 0 14px;width:14px;align-self:stretch;cursor:col-resize;position:relative}
+  .resizer::after{content:"";position:absolute;top:0;bottom:0;left:6px;width:2px;border-radius:2px;background:transparent}
+  .resizer:hover::after,.resizer.dragging::after{background:var(--line)}
+  main>section{margin-left:0;min-width:0;flex:1}
   .nbrow2{display:flex;align-items:center;gap:6px;padding:5px 6px;border-radius:8px;cursor:pointer;font-size:12.5px}
   .nbrow2:hover{background:var(--panel2)}
   .nbrow2.on{background:var(--panel2);color:var(--accent);font-weight:600}
   .nbrow2 .n{overflow:hidden;text-overflow:ellipsis;white-space:nowrap;flex:1}
-  main.nosb{grid-template-columns:1fr}
-  @media (max-width:860px){main{grid-template-columns:1fr}}
+  @media (max-width:860px){main{flex-direction:column}.resizer{display:none}.sidebarcol{width:auto!important;flex-basis:auto!important}}
   #sidebar{position:sticky;top:60px;max-height:calc(100vh - 80px);overflow:auto}
-  .tbl{border-bottom:1px solid var(--line);padding:7px 0}
-  .tbl summary{cursor:pointer;list-style:none;display:flex;gap:6px;align-items:center;font-weight:600}
-  .tbl summary::-webkit-details-marker{display:none}
-  .tbl summary:before{content:"▸";color:var(--dim);transition:.15s}
-  .tbl[open] summary:before{transform:rotate(90deg)}
-  .col{display:flex;gap:6px;padding:2px 0 2px 16px;font-size:12px;color:var(--dim)}
-  .col .t{margin-left:auto;font-size:10px;opacity:.7}
+  /* Schema tree: schema -> table -> columns, Snowflake-style - compact rows, indent by level. */
+  .schemaGrp{border-bottom:1px solid var(--line)}
+  .schemaGrp:last-child{border-bottom:none}
+  .schemaGrp>summary,.tblRow>summary{cursor:pointer;list-style:none;display:flex;align-items:center;gap:6px;
+    padding:5px 4px;border-radius:6px}
+  .schemaGrp>summary::-webkit-details-marker,.tblRow>summary::-webkit-details-marker{display:none}
+  .schemaGrp>summary:hover,.tblRow>summary:hover{background:var(--panel2)}
+  .schemaGrp>summary{font-weight:700;text-transform:uppercase;font-size:10.5px;letter-spacing:.04em;color:var(--dim)}
+  .tblRow>summary{font-weight:600;font-size:12.5px}
+  .chev{color:var(--dim);font-size:9px;width:9px;display:inline-block;transition:transform .15s;flex:none}
+  details[open]>summary>.chev{transform:rotate(90deg)}
+  .schemaBody{padding:0 0 2px 6px}
+  .tblRow{margin:0}
+  .cnt{margin-left:auto;font-size:10px;color:var(--dim);font-weight:400}
+  .tblBody{padding:0 0 4px 21px}
+  .tcmt{padding:2px 4px 5px;font-size:11.5px}
+  .col{display:flex;gap:6px;padding:2px 4px;font-size:11.5px;color:var(--dim);border-radius:4px}
+  .col:hover{background:var(--panel2)}
+  .col .t{margin-left:auto;font-size:9.5px;opacity:.7;flex:none}
   table{border-collapse:collapse;width:100%;margin-top:10px;font-size:12.5px;display:block;overflow:auto;max-height:52vh}
   th,td{border:1px solid var(--line);padding:5px 9px;text-align:left;white-space:nowrap}
   td.num{text-align:right;font-variant-numeric:tabular-nums}
@@ -181,7 +197,7 @@
   </header>
 
   <main>
-    <div class="sidebarcol">
+    <div class="sidebarcol" id="sidebarcol">
       <section class="panel" id="nbPanel">
         <div class="row"><b style="font-size:13px">Notebooks</b>
           <span class="spacer"></span><button class="ghost sm" id="nbNewBtn" title="Start a new notebook">+ New</button></div>
@@ -194,6 +210,7 @@
         <div id="schema"></div>
       </section>
     </div>
+    <div class="resizer" id="sbResizer" title="Drag to resize"></div>
 
     <section>
       <div id="cells"></div>
@@ -284,19 +301,41 @@ function paintDbStatus(h){
 async function loadSchema(){
   try{
     const d=await api("/metadata");
-    $("schema").innerHTML=d.tables.length? d.tables.map(t=>`
-      <details class="tbl"><summary>${esc(t.table.split(".").pop())}
-        <span class="col-count dim" style="margin-left:auto;font-weight:400">${t.approx_rows??"?"} rows</span></summary>
-        <div class="dim" style="padding:4px 0 4px 16px">${esc(t.table)}${t.comment?" - "+esc(t.comment):""}</div>
-        ${t.columns.map(c=>`<div class="col"><span>${esc(c.name)}</span>
-          ${c.comment?`<span title="${esc(c.comment)}">ⓘ</span>`:""}
-          <span class="t">${esc(c.type)}</span></div>`).join("")}
-      </details>`).join("")
-      : `<div class="dim">Nothing to see yet - connect a database.</div>`;
+    if(!d.tables.length){ $("schema").innerHTML=`<div class="dim">Nothing to see yet - connect a database.</div>`; return; }
+    // Group by schema (the part of "schema.table" before the dot; a table with no
+    // dot is in the implicit "main" schema) - a Snowflake-style object tree instead
+    // of one flat list, since a real warehouse's tables live in several schemas.
+    const groups=new Map();
+    for(const t of d.tables){
+      const dot=t.table.indexOf(".");
+      const schema=dot===-1?"main":t.table.slice(0,dot), short=dot===-1?t.table:t.table.slice(dot+1);
+      if(!groups.has(schema)) groups.set(schema,[]);
+      groups.get(schema).push({...t,short});
+    }
+    const schemas=[...groups.keys()].sort();
+    $("schema").innerHTML=schemas.map(s=>{
+      const tables=groups.get(s);
+      return `<details class="schemaGrp"${schemas.length===1?" open":""}>
+        <summary><span class="chev">▸</span><span>${esc(s)}</span><span class="cnt">${tables.length}</span></summary>
+        <div class="schemaBody">
+          ${tables.map(t=>`
+            <details class="tblRow">
+              <summary><span class="chev">▸</span><span>${esc(t.short)}</span>
+                <span class="cnt">${t.approx_rows??"?"}</span></summary>
+              <div class="tblBody">
+                ${t.comment?`<div class="dim tcmt">${esc(t.comment)}</div>`:""}
+                ${t.columns.map(c=>`<div class="col"><span>${esc(c.name)}</span>
+                  ${c.comment?`<span title="${esc(c.comment)}">ⓘ</span>`:""}
+                  <span class="t">${esc(c.type)}</span></div>`).join("")}
+              </div>
+            </details>`).join("")}
+        </div>
+      </details>`;
+    }).join("");
   }catch(e){ $("schema").innerHTML=`<div class="banner bad">${esc(e.message)}</div>`; }
 }
 $("refreshMeta").onclick=loadSchema;
-$("sbBtn").onclick=()=>{ $("sidebar").classList.toggle("hide"); document.querySelector("main").classList.toggle("nosb"); rerenderCharts(); };
+$("sbBtn").onclick=()=>{ $("sidebar").classList.toggle("hide"); rerenderCharts(); };
 
 /* ------------------------------------------------------------ cells */
 const KIND_LABEL={sql:"SQL",ask:"Question",md:"Text"};
@@ -613,6 +652,27 @@ function drawChart(host,r,sp,c){
   }catch(e){ host.innerHTML=`<div class="banner bad">Could not chart this: ${esc(e.message)}</div>`; host.appendChild(tableEl(r)); }
 }
 let rrT; function rerenderCharts(){ clearTimeout(rrT); rrT=setTimeout(()=>S.nb.cells.forEach(c=>S.results[c.id]&&renderOut(c.id)),120); }
+
+/* --------------------------------------------------------- sidebar resize */
+(function(){
+  const col=$("sidebarcol"), rez=$("sbResizer"), KEY="escrowe.sidebarWidth";
+  const saved=parseInt(localStorage.getItem(KEY)||"",10);
+  if(saved) col.style.flexBasis=Math.min(560,Math.max(180,saved))+"px";
+  let dragging=false, startX=0, startW=0;
+  rez.addEventListener("mousedown",e=>{
+    dragging=true; startX=e.clientX; startW=col.getBoundingClientRect().width;
+    rez.classList.add("dragging"); document.body.style.userSelect="none"; e.preventDefault();
+  });
+  window.addEventListener("mousemove",e=>{
+    if(!dragging) return;
+    const w=Math.min(560,Math.max(180,startW+(e.clientX-startX)));
+    col.style.flexBasis=w+"px"; rerenderCharts();
+  });
+  window.addEventListener("mouseup",()=>{
+    if(!dragging) return; dragging=false; rez.classList.remove("dragging"); document.body.style.userSelect="";
+    try{ localStorage.setItem(KEY,String(Math.round(col.getBoundingClientRect().width))); }catch{}
+  });
+})();
 window.addEventListener("resize",rerenderCharts);
 matchMedia("(prefers-color-scheme: dark)").addEventListener?.("change",rerenderCharts);
 
