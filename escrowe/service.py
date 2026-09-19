@@ -316,8 +316,18 @@ class Escrowe:
         too - the one deliberate, person-approved exception to shape-only memory.
         `on_status`, if given, is called with "thinking" while the agent is composing
         a query and "running the query" once one is about to execute."""
+        question = question.strip()
         session_id = principal.session or self._operator_session_id
         history = self._history.get(session_id, [])
+        if feed_data is None:
+            # An exact repeat of an earlier question in this session: replay what it
+            # already produced, instantly - no new query, no agent call. Without this,
+            # the agent sees the repeat in CONVERSATION SO FAR and (reasonably) answers
+            # in prose that it's already been asked, instead of just showing the result
+            # again, which is what a person re-running a question actually wants.
+            for turn in reversed(history):
+                if turn.question == question and turn.result is not None:
+                    return turn.result
         if feed_data is not None:
             if on_status:
                 on_status("thinking")
@@ -331,8 +341,9 @@ class Escrowe:
                 refusal = Denied(proposal.refusal or "The agent could not answer from the fed data.")
                 refusal.needs_login = proposal.needs_login
                 raise refusal
-            self._remember(session_id, HistoryTurn(question=question, fed=feed_data))
-            return Answer(proposal.answer, question, aid, proposal.provider, 1)
+            ans = Answer(proposal.answer, question, aid, proposal.provider, 1)
+            self._remember(session_id, HistoryTurn(question=question, fed=feed_data, result=ans))
+            return ans
         tables = self.catalog_for(principal)
         if tables is None:
             raise EngineError("No database connected. Run `escrowe connect ...` first.")
@@ -348,9 +359,10 @@ class Escrowe:
             if proposal.answer:
                 aid = self.store.audit(user=principal.user, mode="ask", question=question,
                                        decision="answered", reason=proposal.answer[:500], attempts=n)
+                ans = Answer(proposal.answer, question, aid, proposal.provider, n)
                 self._remember(session_id, HistoryTurn(question=question,
-                                                       shape=f"answered: {proposal.answer[:300]}"))
-                return Answer(proposal.answer, question, aid, proposal.provider, n)
+                                                       shape=f"answered: {proposal.answer[:300]}", result=ans))
+                return ans
             if not proposal.sql:
                 self.store.audit(user=principal.user, mode="ask", question=question,
                                  decision="refused", reason=proposal.refusal, attempts=n)
@@ -374,7 +386,7 @@ class Escrowe:
                 continue
             result.note = proposal.note
             self._remember(session_id, HistoryTurn(question=question, sql=result.sql,
-                                                   shape=_shape_feedback(result.table)))
+                                                   shape=_shape_feedback(result.table), result=result))
             return result
         raise Denied(f"No acceptable query after {self.settings.agent_attempts} attempts. Last: {last_error}")
 

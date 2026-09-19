@@ -75,11 +75,17 @@ class Attempt:
 class HistoryTurn:
     """One past question in this session, kept for every later question - shape
     only (never rows) unless `fed` is set, which happens only when the person
-    explicitly ran \\feed and approved sharing that result."""
+    explicitly ran \\feed and approved sharing that result.
+
+    `result` is separate from what the agent ever sees: the actual Answer or
+    QueryResult this question produced, kept only so an exact repeat of the
+    same question can be replayed instantly (see Escrowe.ask) without a new
+    query or a new agent call - never rendered into a prompt."""
     question: str
     sql: str | None = None
     shape: str | None = None
     fed: str | None = None
+    result: object = None
 
 
 @dataclass
