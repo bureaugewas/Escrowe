@@ -47,6 +47,10 @@ class Settings:
     agent_attempts: int = 3
     token_ttl_s: int = 12 * 3600
     server_url: str = "http://127.0.0.1:8765"
+    # The HTTP API (escrowe serve / login+bearer-token access) is fully built and
+    # tested, but off by default for the beta - the CLI is what's getting tested
+    # first. The code stays in place; this is the one switch that turns it on.
+    api_enabled: bool = False
 
     @property
     def store_path(self) -> Path:
@@ -120,4 +124,5 @@ def load_settings(ephemeral: bool | None = None) -> Settings:
         query_timeout_s=float(os.environ.get("ESCROWE_QUERY_TIMEOUT", "30")),
         agent_attempts=int(os.environ.get("ESCROWE_AGENT_ATTEMPTS", "3")),
         server_url=os.environ.get("ESCROWE_SERVER", "http://127.0.0.1:8765"),
+        api_enabled=os.environ.get("ESCROWE_API_ENABLED", "").lower() in ("1", "true", "yes"),
     )

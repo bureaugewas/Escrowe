@@ -722,6 +722,10 @@ def claude_logout():
 @app.command()
 def serve(host: str = "127.0.0.1", port: int = 8765):
     """Start the Escrowe server (reads .env / ESCROWE_* variables)."""
+    if not load_settings().api_enabled:
+        console.print("[yellow]The HTTP API is off for this beta.[/] Set "
+                      "[bold]ESCROWE_API_ENABLED=1[/] to turn it on.")
+        raise typer.Exit(1)
     import uvicorn
     from .server import create_app
     uvicorn.run(create_app(), host=host, port=port)
