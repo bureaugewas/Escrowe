@@ -38,7 +38,9 @@ class Denied(Exception):
 
 WRITE_STATEMENTS = (exp.Insert, exp.Update, exp.Delete, exp.Merge,
                     exp.Create, exp.Drop, exp.Alter, exp.TruncateTable)
-READ_STATEMENTS = (exp.Select, exp.Union)
+# EXCEPT/INTERSECT are exactly as read-only as UNION - two SELECTs combined,
+# no side effects - they were just never added alongside it.
+READ_STATEMENTS = (exp.Select, exp.Union, exp.Except, exp.Intersect)
 
 # Only kinds sqlglot actually knows get their own dialect (so the parser
 # tolerates that database's own syntax); anything else parses generically,
@@ -60,19 +62,53 @@ _DIALECT_ALIASES = {"sqlserver": "tsql", "ducklake": "duckdb"}
 _FILE_WRITE = re.compile(r"\binto\s+(outfile|dumpfile)\b", re.I)
 
 # Built-ins with no legitimate "read a table" purpose: they stall the
-# connection, manipulate server-wide locks, or read a file off the server's
-# own disk rather than a table's data.
+# connection, manipulate server-wide locks, or read a file/the environment
+# off the server's own disk rather than a table's data - the same reasoning
+# across every engine, just different names. Only MySQL's own set (sleep,
+# locks, load_file) was covered until this list was extended to match: a
+# database-account grant is a natural mental model for "which tables", not
+# "can this read arbitrary files off the host" - so this stays a hard denial
+# for everyone (agent and person alike), same as the MySQL functions already
+# were, rather than something left to the connected account's own privileges.
 BLOCKED_FUNCTIONS = {
+    # MySQL/MariaDB
     "sleep", "benchmark", "get_lock", "release_lock", "release_all_locks",
     "is_free_lock", "is_used_lock", "master_pos_wait", "source_pos_wait",
     "gtid_wait", "wait_for_executed_gtid_set", "load_file",
+    # PostgreSQL - file/env reads and connection/session manipulation
+    "pg_read_file", "pg_read_binary_file", "pg_ls_dir", "pg_stat_file",
+    "pg_sleep", "pg_sleep_for", "pg_sleep_until", "pg_terminate_backend",
+    "pg_cancel_backend", "lo_import", "lo_export",
+    # DuckDB - reads a server file/env var rather than an attached table.
+    # read_parquet/read_csv also legitimately reads a lake's own data files
+    # via DuckLake, but the agent's SQL never needs to call it directly -
+    # DuckLake tables are already attached and queryable by plain name.
+    "getenv", "read_text", "read_blob", "read_csv", "read_csv_auto",
+    "read_json", "read_json_auto", "read_parquet", "glob",
+    # SQLite - readfile/writefile move file contents in/out through a
+    # function call; load_extension loads a native shared library, i.e.
+    # arbitrary code execution, not just a data-boundary question.
+    "readfile", "writefile", "load_extension",
 }
+
+
+_CALL_NAME = re.compile(r"^\s*([A-Za-z_][A-Za-z0-9_]*)\s*\(")
 
 
 def _fn_name(node: exp.Expression) -> str:
     if isinstance(node, exp.Anonymous):
-        return str(node.this).lower()
-    return type(node).__name__.lower()
+        # .name (not str(node.this)) so a quoted call - `SLEEP`(5) - matches
+        # the blocklist instead of comparing against '"sleep"' with the
+        # quote characters baked in.
+        this = node.this
+        return this.name.lower() if isinstance(this, exp.Expression) else str(this).lower()
+    # A function sqlglot knows by its own node type (e.g. exp.ReadCSV for
+    # READ_CSV) rather than exp.Anonymous - the class name doesn't reliably
+    # preserve the original underscored spelling (ReadCSV, not Read_Csv), so
+    # take the name from the rendered SQL itself instead of guessing at
+    # sqlglot's internal naming convention.
+    m = _CALL_NAME.match(node.sql())
+    return m.group(1).lower() if m else type(node).__name__.lower()
 
 
 def check(sql: str, allow_write: bool, dialect: str | None = None) -> str:

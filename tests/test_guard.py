@@ -60,3 +60,42 @@ def test_sqlserver_dialect_alias_lets_real_tsql_syntax_parse():
 
 def test_ducklake_dialect_alias_parses_as_duckdb():
     assert check("SELECT * FROM customers", allow_write=False, dialect="ducklake")
+
+
+@pytest.mark.parametrize("sql,dialect", [
+    ("SELECT `SLEEP`(5)", "mysql"),                        # backtick-quoted: name mustn't include the quotes
+    ("SELECT read_csv('/etc/passwd')", "duckdb"),
+    ("SELECT read_csv_auto('/etc/passwd')", "duckdb"),
+    ("SELECT read_json('/etc/passwd')", "duckdb"),
+    ("SELECT read_parquet('/etc/passwd')", "duckdb"),
+    ("SELECT read_text('/etc/passwd')", "duckdb"),
+    ("SELECT getenv('HOME')", "duckdb"),
+    ("SELECT * FROM glob('/etc/*')", "duckdb"),
+    ("SELECT readfile('/etc/passwd')", "sqlite"),
+    ("SELECT writefile('/tmp/x', 'y')", "sqlite"),
+    ("SELECT load_extension('/tmp/x.so')", "sqlite"),
+    ("SELECT pg_read_file('/etc/passwd')", "postgres"),
+    ("SELECT pg_read_binary_file('/etc/passwd')", "postgres"),
+    ("SELECT pg_ls_dir('/etc')", "postgres"),
+    ("SELECT pg_sleep(10)", "postgres"),
+    ("SELECT pg_terminate_backend(123)", "postgres"),
+    ("SELECT pg_cancel_backend(123)", "postgres"),
+])
+def test_server_side_file_and_env_reads_are_denied_across_engines(sql, dialect):
+    """These parse as an ordinary SELECT but read the server's own filesystem
+    or environment rather than a table - the same class of problem as
+    MySQL's LOAD_FILE, just under a different name per engine."""
+    with pytest.raises(Denied):
+        check(sql, allow_write=True, dialect=dialect)
+
+
+@pytest.mark.parametrize("sql,dialect", [
+    ("SELECT id FROM a EXCEPT SELECT id FROM b", "postgres"),
+    ("SELECT id FROM a EXCEPT SELECT id FROM b", "sqlserver"),
+    ("SELECT id FROM a INTERSECT SELECT id FROM b", "postgres"),
+])
+def test_except_and_intersect_are_allowed_reads(sql, dialect):
+    """As read-only as UNION (already allowed) - two SELECTs combined, no
+    side effects. There was no security reason these were denied; they were
+    just missing from READ_STATEMENTS."""
+    assert check(sql, allow_write=False, dialect=dialect)
