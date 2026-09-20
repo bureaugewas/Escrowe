@@ -10,23 +10,31 @@ readme = "README.md"
 requires-python = ">=3.10"
 license = {text = "MIT"}
 dependencies = [
-  "sqlglot>=27",
-  "pyarrow>=17",
-  "fastapi>=0.110",
-  "uvicorn[standard]>=0.29",
-  "pydantic>=2",
-  "httpx>=0.27",
-  "typer>=0.12",
-  "rich>=13",
-  "anthropic>=1.0",
-  "pymysql>=1.1",
-  "psycopg[binary]>=3.1", # engines/postgres.py
-  "pymssql>=2.3",         # engines/sqlserver.py: pure-C TDS client, no ODBC driver needed
-  "duckdb>=1.4",          # engines/ducklake.py: DuckDB is DuckLake's own client library
+  # Pinned exactly, not >=: the whole security boundary in guard.py depends on
+  # sqlglot parsing every dialect's statement shapes exactly as expected (see
+  # its own comments - two real bugs this session came from trusting a
+  # library's parsing behavior without re-checking it after a change). A
+  # version bump here should be its own deliberate step - install the new
+  # version, run `pytest tests/test_guard.py tests/test_session_security.py`
+  # (and the rest of the suite) before moving the pin, not something that
+  # happens silently via a routine `pip install --upgrade`.
+  "sqlglot==30.18.0",
+  "pyarrow==25.0.1",
+  "fastapi==0.141.1",
+  "uvicorn[standard]==0.53.0",
+  "pydantic==2.13.5",
+  "httpx==0.28.1",
+  "typer==0.27.2",
+  "rich==15.0.0",
+  "anthropic==1.7.0",
+  "pymysql==1.2.3",
+  "psycopg[binary]==3.3.6", # engines/postgres.py
+  "pymssql==2.4.1",         # engines/sqlserver.py: pure-C TDS client, no ODBC driver needed
+  "duckdb==1.5.5",          # engines/ducklake.py: DuckDB is DuckLake's own client library
 ]
 
 [project.optional-dependencies]
-dev = ["pytest>=8"]
+dev = ["pytest==9.1.1", "pip-audit==2.10.1"]
 
 [project.scripts]
 escrowe = "escrowe.cli:app"

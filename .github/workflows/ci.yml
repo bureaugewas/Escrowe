@@ -1,0 +1,41 @@
+name: CI
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+  schedule:
+    # Dependencies are pinned exactly (see pyproject.toml) precisely so a new
+    # CVE in a pinned version doesn't slip in silently via a routine install -
+    # this catches one being *disclosed* after the fact, on an unchanged pin.
+    - cron: "0 6 * * 1"   # every Monday
+
+jobs:
+  pip-audit:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+      - run: pip install -e ".[dev]"
+      # --skip-editable: escrowe itself is a local editable install, not a
+      # published package pip-audit could ever look up - that's an expected,
+      # permanent skip, not something to fail the job on. A real
+      # vulnerability in any pinned dependency still fails this job.
+      - run: pip-audit --local --skip-editable
+
+  test:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+      - run: pip install -e ".[dev]"
+      # Per-engine direct-connection tests (test_*_direct.py) need the
+      # docker-compose services in docker/ and skip themselves cleanly when
+      # those aren't reachable - this job runs everything else: the guard,
+      # blind-agent, credential/session/notebook security suites, all of
+      # which use the fake in-memory engine and need no live database.
+      - run: pytest tests/ -q
