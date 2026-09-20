@@ -362,10 +362,20 @@ class Escrowe:
         for n in range(1, self.settings.agent_attempts + 1):
             if on_status:
                 on_status("thinking")
+            # A probe's reply is just SQL, never meant for the person to read - it's the
+            # agent checking its own work before finalizing (see agent.py's SYSTEM prompt).
+            # Buffer this turn's tokens instead of streaming them live, so a probe's raw
+            # `-- probe\nSELECT ...` text never appears as if it were the answer; only
+            # replay them once we know this turn is the one actually being returned.
+            buf: list[str] = []
             proposal = self.agent.propose(question, schema_text, attempts,
                                           context={"user": principal.user, "session": session_id},
-                                          history=history, on_token=on_token)
+                                          history=history,
+                                          on_token=(buf.append if on_token else None))
             if proposal.answer:
+                if on_token:
+                    for tok in buf:
+                        on_token(tok)
                 aid = self.store.audit(user=principal.user, mode="ask", question=question,
                                        decision="answered", reason=proposal.answer[:500], attempts=n)
                 ans = Answer(proposal.answer, question, aid, proposal.provider, n)
