@@ -4,5 +4,7 @@ data.duckdb
 audit.duckdb
 *.duckdb.wal
 config.yaml
-.DS_store
+.DS_Store
 *.egg-info/
+.venv/
+.pytest_cache/
