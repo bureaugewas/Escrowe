@@ -44,3 +44,19 @@ def test_write_statements_still_blocked_for_the_agent_only():
     with pytest.raises(Denied, match="only read"):
         check("DELETE FROM customers", allow_write=False, dialect="mysql")
     assert check("DELETE FROM customers", allow_write=True, dialect="mysql")
+
+
+def test_sqlserver_dialect_alias_lets_real_tsql_syntax_parse():
+    """escrowe's engine kind is "sqlserver"; sqlglot's own dialect name for
+    T-SQL is "tsql". Passing the kind straight through used to fall back to
+    generic parsing, denying ordinary T-SQL as unparseable rather than because
+    it's genuinely unsupported."""
+    assert check("SELECT TOP 5 * FROM customers", allow_write=False, dialect="sqlserver")
+    assert check("SELECT * FROM [customers]", allow_write=False, dialect="sqlserver")
+    # the write-guard must still hold once the dialect actually parses this
+    with pytest.raises(Denied, match="only read"):
+        check("SELECT TOP 5 * INTO newtable FROM customers", allow_write=False, dialect="sqlserver")
+
+
+def test_ducklake_dialect_alias_parses_as_duckdb():
+    assert check("SELECT * FROM customers", allow_write=False, dialect="ducklake")

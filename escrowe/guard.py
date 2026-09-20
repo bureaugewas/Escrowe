@@ -43,7 +43,14 @@ READ_STATEMENTS = (exp.Select, exp.Union)
 # Only kinds sqlglot actually knows get their own dialect (so the parser
 # tolerates that database's own syntax); anything else parses generically,
 # which is plenty for the one thing checked here: statement shape.
-_SQLGLOT_DIALECTS = {"mysql", "postgres", "duckdb", "sqlite", "snowflake", "bigquery"}
+_SQLGLOT_DIALECTS = {"mysql", "postgres", "duckdb", "sqlite", "snowflake", "bigquery", "tsql"}
+# escrowe's own engine `kind` names don't always match sqlglot's dialect names:
+# sqlserver's T-SQL dialect is called "tsql" there, and a DuckLake catalog is a
+# DuckDB catalog format - same SQL dialect, just a different kind of catalog.
+# Without this, e.g. `SELECT TOP 5 ...` / `[bracketed]` identifiers on SQL
+# Server parsed generically and were denied as unparseable, not because T-SQL
+# genuinely isn't supported.
+_DIALECT_ALIASES = {"sqlserver": "tsql", "ducklake": "duckdb"}
 
 # A file write disguised as a SELECT. sqlglot's parsers already fail on this
 # syntax today (so it would be denied anyway, as an unparseable statement),
@@ -73,6 +80,7 @@ def check(sql: str, allow_write: bool, dialect: str | None = None) -> str:
     if _FILE_WRITE.search(sql):
         raise Denied("SELECT ... INTO OUTFILE/DUMPFILE is not something escrowe runs: "
                      "it writes a file on the database server, not a read.")
+    dialect = _DIALECT_ALIASES.get(dialect, dialect)
     read = dialect if dialect in _SQLGLOT_DIALECTS else None
     try:
         statements = [s for s in sqlglot.parse(sql, read=read) if s is not None]
