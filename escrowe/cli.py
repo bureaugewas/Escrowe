@@ -52,6 +52,26 @@ BLUE = "bright_blue"                   # the escrowe blue - a named ANSI color, 
 NAME = f"[bold {BLUE}]Escrowe[/]"
 CMD_STYLE = "blue"                     # the plain (non-bright) variant - inherently darker
                                        # than BLUE above - the \command column in \help
+PLACEHOLDER_STYLE = "magenta"          # <query>/<file>/<question> within a \command - a
+                                       # named ANSI color, not a truecolor hex, same
+                                       # reasoning as BLUE/CMD_STYLE above
+_PLACEHOLDER = re.compile(r"(<[^>]+>)")
+
+
+def _style_cmd(cmd: str) -> str:
+    """A \\command string with any <placeholder> tokens picked out in their
+    own color - built as separate, non-overlapping markup spans rather than
+    one nested inside the other, so there's no ambiguity about which [/]
+    closes which."""
+    parts, last = [], 0
+    for m in _PLACEHOLDER.finditer(cmd):
+        if m.start() > last:
+            parts.append(f"[{CMD_STYLE}]{cmd[last:m.start()]}[/]")
+        parts.append(f"[{PLACEHOLDER_STYLE}]{m.group(1)}[/]")
+        last = m.end()
+    if last < len(cmd):
+        parts.append(f"[{CMD_STYLE}]{cmd[last:]}[/]")
+    return "".join(parts)
 LLM_STYLE = "#b7c6d9"                  # light grey-blue - readable body text, not a heading
 LLM_INDENT = "  "
 
@@ -444,7 +464,7 @@ def _repl(conn, idle_minutes: float = IDLE_MINUTES, prompt: str = None) -> str:
                     ("\\database", "disconnect and choose a different database, from scratch"),
                     ("\\q", "quit"),
                 ]
-                console.print("\n".join(f"[{CMD_STYLE}]{cmd:<18}[/]{escape(desc)}" for cmd, desc in HELP_ITEMS),
+                console.print("\n".join(f"{_style_cmd(f'{cmd:<18}')}{escape(desc)}" for cmd, desc in HELP_ITEMS),
                              highlight=False)
             elif line == "\\feed" or line.startswith("\\feed "):
                 feed_question = line[len("\\feed"):].strip()

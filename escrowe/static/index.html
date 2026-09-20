@@ -232,6 +232,7 @@ let S={token:null,user:null,idleAt:0,present:false,nb:{name:"",cells:[]},results
 const IDLE_MS=30*60*1000, DRAFT_KEY="escrowe.notebook.draft";
 const uid=()=>Math.random().toString(36).slice(2,10);
 const HAS_PLOT=typeof Plot!=="undefined"&&typeof d3!=="undefined";
+const DEFAULT_VIEW="table";   // a fresh result shows its table first; Chart is one click away
 
 async function api(path,{method="GET",body,auth=true}={}){
   const h={"Content-Type":"application/json"};
@@ -344,7 +345,7 @@ const PLACEHOLDER={sql:"SELECT region, count(*) AS orders FROM orders GROUP BY 1
                    md:"Narration in markdown: # heading, **bold**, - lists"};
 
 function addCell(kind,focus=true,after=null){
-  const c={id:uid(),kind,title:"",text:"",chart:{type:"auto",view:"chart"}};
+  const c={id:uid(),kind,title:"",text:"",chart:{type:"auto"}};   // no view yet - renderOut picks one dynamically
   const i=after?S.nb.cells.findIndex(x=>x.id===after)+1:S.nb.cells.length;
   S.nb.cells.splice(i,0,c); renderAll(); saveDraft();
   if(focus) document.querySelector(`[data-id="${c.id}"] textarea`)?.focus();
@@ -471,7 +472,12 @@ function suggest(res){
   }
   if(nums.length>=2){ const s={type:"scatter",x:nums[0].name,y:nums[1].name};
     const cat=texts.find(t=>t.distinct>1&&t.distinct<=8); if(cat) s.color=cat.name; return s; }
-  return {type:"table"};
+  // Nothing here suggests a specific chart, but the manual override panel
+  // still needs somewhere to start from instead of blank X/Y selects the
+  // moment someone switches away from the table view.
+  const x=(dates[0]||texts[0]||cols[0])?.name;
+  const y=(nums[0]||cols.find(c=>c.name!==x))?.name;
+  return {type:"table", x, y};
 }
 // The effective chart spec: manual overrides win over the suggestion, field by field.
 function spec(c,res){
@@ -487,7 +493,7 @@ function spec(c,res){
     x=x||(type==="scatter"?nums[0]?.name:(dates[0]||other[0]||res.columns[0])?.name);
     y=y||(nums.find(k=>k.name!==x)||res.columns.find(k=>k.name!==x))?.name;
   }
-  return {type,x,y,color:pick("color"),size:pick("size"),orient:cfg.orient||"auto"};
+  return {type,x,y,color:pick("color"),size:pick("size")};
 }
 
 /* --------------------------------------------------------- rendering */
@@ -501,7 +507,11 @@ function renderOut(id){
   if(r.answer!==undefined){
     out.innerHTML=`<div class="dim sqlnote">from the schema</div><pre>${esc(r.answer)}</pre>`; return;
   }
-  const sp=spec(c,r), view=c.chart?.view||"chart", canChart=HAS_PLOT||sp.type==="stat"||sp.type==="table";
+  const sp=spec(c,r), canChart=HAS_PLOT||sp.type==="stat"||sp.type==="table";
+  // No explicit choice yet: a table is the honest default (a chart is a claim about
+  // what the data means), except a single aggregate number, where the stat tile
+  // *is* the natural, only-good representation - not really a chart/table choice.
+  const view=c.chart?.view||(sp.type==="stat"?"chart":DEFAULT_VIEW);
   const showChart=view==="chart"&&sp.type!=="table"&&canChart;
   const notes=[]; if(r.attempts>1) notes.push(`${r.attempts} attempts`);
   out.innerHTML=
@@ -557,12 +567,6 @@ function toggleCfg(id,force){
         `<label class="chip-check"><input type="checkbox" value="${esc(k.name)}" onchange="toggleY('${id}',this)"
            ${yArr.includes(k.name)?"checked":""}> ${esc(k.name)}</label>`).join("")}</div></div>`
     :`<div><label>Y</label><select onchange="setCfg('${id}','y',this.value)">${opt(sp.y,true)}</select></div>`;
-  const orientControl=sp.type==="bar"?`<div><label>Orientation</label>
-      <select onchange="setCfg('${id}','orient',this.value)">
-        <option value="auto"${sp.orient==="auto"?" selected":""}>auto</option>
-        <option value="vertical"${sp.orient==="vertical"?" selected":""}>vertical (categories on x)</option>
-        <option value="horizontal"${sp.orient==="horizontal"?" selected":""}>horizontal (categories on y)</option>
-      </select></div>`:"";
   el.innerHTML=`
     <div><label>Chart</label><select onchange="setCfg('${id}','type',this.value)">
       ${types.map(t=>`<option value="${t}"${(cfg.type||"auto")===t?" selected":""}>${t==="auto"?"auto ("+sp.type+")":t}</option>`).join("")}</select></div>
@@ -570,7 +574,6 @@ function toggleCfg(id,force){
     ${yControl}
     ${multiSeries&&yArr.length>1?"":`<div><label>Color</label><select onchange="setCfg('${id}','color',this.value)">${opt(sp.color,true)}</select></div>`}
     <div><label>Size</label><select onchange="setCfg('${id}','size',this.value)">${opt(sp.size,true)}</select></div>
-    ${orientControl}
     <div style="align-self:end"><button class="ghost sm" onclick="setCfg('${id}',null)">Reset to auto</button></div>`;
 }
 function toggleY(id,el){
@@ -583,7 +586,7 @@ function toggleY(id,el){
 }
 function setCfg(id,k,v){
   const c=cell(id);
-  if(k===null) c.chart={type:"auto",view:c.chart?.view||"chart"};
+  if(k===null) c.chart={type:"auto"};   // no view either - back to fully dynamic
   else if(k==="type"){
     const sp=spec(c,S.results[id]);
     let y=sp.y;
@@ -625,8 +628,11 @@ function drawChart(host,r,sp,c){
   try{
     if(sp.type==="bar"){
       const cats=[...new Set(data.map(d=>catLabel(d[sp.x])))];        // keep the query's own order
-      const horizontal=sp.orient==="vertical"?false:sp.orient==="horizontal"?true
-                       :(cats.length>8||cats.some(s=>s.length>12));   // auto: guess from category count/length
+      // Orientation is exactly whichever column is on which axis, nothing else -
+      // no separate auto-guess from category count/length that could disagree
+      // with what X/Y actually say (that was confusing: the panel would say
+      // "X: city" while the chart quietly drew it on the y-axis instead).
+      const horizontal=xs.type==="number";
       if(horizontal){
         o.y={label:sp.x,domain:cats}; o.x={label:sp.y,grid:true}; o.marginLeft=Math.min(200,12+7*Math.max(...cats.map(s=>s.length)));
         o.height=Math.max(140,26*cats.length+50);
@@ -722,7 +728,7 @@ document.addEventListener("keydown",e=>{ if(e.key==="Escape"&&S.present) setPres
 // last result, so opening a notebook shows it instantly with no re-query and
 // no agent call - Run/Run all refreshes a cell on request.
 function cleanCells(){ return S.nb.cells.map(c=>{ const {type,x,y,color,size,view}=c.chart||{};
-  return {id:c.id,kind:c.kind,title:c.title||"",text:c.text||"",chart:{type:type||"auto",x,y,color,size,view:view||"chart"},
+  return {id:c.id,kind:c.kind,title:c.title||"",text:c.text||"",chart:{type:type||"auto",x,y,color,size,view:view||null},
           result:c.result||null}; }); }
 let draftT; function saveDraft(){ clearTimeout(draftT); draftT=setTimeout(()=>{
   try{ localStorage.setItem(DRAFT_KEY,JSON.stringify({name:$("nbName").value,cells:cleanCells()})); }catch{}
@@ -757,7 +763,7 @@ document.addEventListener("keydown",e=>{ if((e.metaKey||e.ctrlKey)&&e.key==="s"&
 
 async function openNotebook(name){
   const d=await api("/notebooks/"+encodeURIComponent(name));
-  S.nb={name,cells:d.cells.map(c=>({...c,chart:c.chart||{type:"auto",view:"chart"}}))}; S.results={};
+  S.nb={name,cells:d.cells.map(c=>({...c,chart:c.chart||{type:"auto"}}))}; S.results={};
   // Each cell's last result was saved alongside it: show it instantly, no query, no
   // agent call. A cell with nothing cached (added but never run before saving) just
   // shows "not run yet" - Run/Run all is one click away when a refresh is wanted.
