@@ -25,6 +25,15 @@ def test_persisted_json_never_contains_a_password_for_any_engine_kind(kind):
     assert "password" not in json.loads(persisted)
 
 
+def test_persisted_json_never_contains_a_ducklake_quack_token():
+    """A Quack token authenticates a hosted DuckLake catalog exactly like a
+    password authenticates an account - it must never reach disk either."""
+    src = Source("lake", "ducklake", {"metadata": "quack:host:443", "token": "TOK-secret", "data_path": "s3://x"})
+    persisted = src.persisted_json()
+    assert "TOK-secret" not in persisted
+    assert "token" not in json.loads(persisted)
+
+
 def test_redacted_masks_every_secret_key():
     params = {k: "raw-secret-value" for k in SECRET_KEYS}
     params["host"] = "h"

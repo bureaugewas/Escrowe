@@ -70,7 +70,11 @@ def status(store=None) -> dict:
         source = "none"
     return {"source": source, "connected": source != "none",
             "claude_installed": sub["installed"], "logged_in": sub["logged_in"],
-            "api_key": bool(key), "api_key_from_env": from_env}
+            "api_key": bool(key), "api_key_from_env": from_env,
+            # Agent._resolve() checks the api key BEFORE the subscription, so an api
+            # key set alongside a subscription login actually wins in practice even
+            # though `source` above reports "subscription" - this is what's true.
+            "shadowed": bool(key) and sub["logged_in"]}
 
 
 def describe(st: dict | None = None, store=None) -> str:

@@ -115,7 +115,14 @@ class Escrowe:
         # (see engines/*.py catalog()/table_sizes()) and out of the agent's
         # reach - nothing it writes can trigger another catalog read.
         self._catalog_cache: dict[int, list[TableMeta]] = {}
-        self.engine = self._connect(self._source) if connectable else None
+        try:
+            self.engine = self._connect(self._source) if connectable else None
+        except EngineError:
+            # A credential-less kind (e.g. DuckLake) that needed a secret not kept on
+            # disk - a token, same reasoning as a password - degrades to "not yet
+            # connected" instead of crashing the whole process on startup; \database
+            # or a fresh `escrowe connect` supplies it again, same as a lost password.
+            self.engine = None
         # A fixed-length id for the log, even when nobody logged in: the local
         # CLI's operator mode has no JWT session, but every exchange still
         # needs one consistent id to group it in the transcript.

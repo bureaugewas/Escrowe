@@ -18,7 +18,7 @@ from urllib.parse import parse_qsl, unquote, urlparse
 from . import engines
 from .config import Attachment
 
-SECRET_KEYS = ("password",)
+SECRET_KEYS = ("password", "token")   # "token" authenticates a quack:-hosted DuckLake catalog
 
 
 @dataclass
@@ -40,10 +40,12 @@ class Source:
         return json.dumps(self.params)
 
     def persisted_json(self) -> str:
-        """What may be written to disk: never a literal password. A
-        `password_env` reference is kept, so a source that resolves its secret
-        from the environment still reconnects on its own."""
-        clean = {k: v for k, v in self.params.items() if k != "password"}
+        """What may be written to disk: never a literal secret (password, or a
+        DuckLake/Quack token). A `password_env` reference is kept, so a source
+        that resolves its secret from the environment still reconnects on its
+        own - there is no equivalent env-indirection for a token today, so a
+        ducklake source with a stripped token simply needs it re-entered."""
+        clean = {k: v for k, v in self.params.items() if k not in SECRET_KEYS}
         return json.dumps(clean)
 
 

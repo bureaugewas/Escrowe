@@ -718,7 +718,7 @@ def claude_status():
         console.print("Run [bold]escrowe[/] or [bold]escrowe claude login[/] to connect it.")
     if st["shadowed"]:
         console.print("[yellow]ANTHROPIC_API_KEY is set and wins over the browser login. Unset it to use the profile.[/]")
-    if not st["connected"] and not st["ant_installed"]:
+    if not st["connected"] and not st["claude_installed"]:
         console.print(f"[dim]{llm_login.INSTALL_HINT}[/]")
 
 
