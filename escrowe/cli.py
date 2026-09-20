@@ -199,14 +199,20 @@ def _first_run_database(conn: LocalConnection) -> None:
         return
 
 
+DEFAULT_PORTS = {"mysql": 3306, "postgres": 5432, "sqlserver": 1433}
+
+
 def _ask_connection(kind: str) -> tuple[str, dict]:
     if kind == "ducklake":
         return "lake", _ducklake_prompts()
     if kind == "duckdb":
         path = typer.prompt("File path", default=str(Path.cwd() / "database.duckdb"))
         return "duckdb", {"path": str(Path(path).expanduser())}
+    if kind == "sqlite":
+        path = typer.prompt("File path", default=str(Path.cwd() / "database.sqlite"))
+        return "sqlite", {"path": str(Path(path).expanduser())}
     host = typer.prompt("Host", default="127.0.0.1")
-    port = int(typer.prompt("Port", default=3306))
+    port = int(typer.prompt("Port", default=DEFAULT_PORTS.get(kind, 3306)))
     database = typer.prompt("Database", default="", show_default=False).strip()
     # The username and password are the database's own; its grants decide everything.
     user = typer.prompt("Username")
@@ -840,7 +846,7 @@ def attach(dsn: str = typer.Argument(None, help="Connection string, e.g. mysql:/
     else:
         kind = _prompt_choice(f"Database system [{'/'.join(KINDS)}]", list(KINDS), KINDS[0])
         name = name or typer.prompt("Name for this source (used as the database name in SQL)", default=kind)
-        params = _db_prompts()
+        _, params = _ask_connection(kind)
     try:
         data = conn.attach(name, kind, params, persist=False)
     except EscroweError as e:
@@ -851,16 +857,6 @@ def attach(dsn: str = typer.Argument(None, help="Connection string, e.g. mysql:/
         console.print(f"  {t}")
 
 
-def _db_prompts() -> dict:
-    host = typer.prompt("Host", default="127.0.0.1")
-    port = int(typer.prompt("Port", default=3306))
-    database = typer.prompt("Database", default="", show_default=False).strip()
-    user = typer.prompt("Username")
-    password = typer.prompt("Password", hide_input=True, default="", show_default=False)
-    p = {"host": host, "port": port, "user": user, "password": password}
-    if database:
-        p["database"] = database
-    return p
 
 
 @app.command()

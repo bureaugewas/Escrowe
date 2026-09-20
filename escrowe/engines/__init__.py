@@ -5,11 +5,17 @@ registering it below - nothing elsewhere needs to change."""
 from .base import Column, DirectEngine, EngineError
 from .ducklake import DuckDBEngine, DuckLakeEngine
 from .mysql import MySQLEngine
+from .postgres import PostgresEngine
+from .sqlite import SQLiteEngine
+from .sqlserver import SQLServerEngine
 
 REGISTRY: dict[str, type[DirectEngine]] = {
     "mysql": MySQLEngine,
+    "postgres": PostgresEngine,
+    "sqlserver": SQLServerEngine,
     "ducklake": DuckLakeEngine,
     "duckdb": DuckDBEngine,
+    "sqlite": SQLiteEngine,
 }
 
 

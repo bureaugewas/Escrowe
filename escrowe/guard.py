@@ -83,6 +83,12 @@ def check(sql: str, allow_write: bool, dialect: str | None = None) -> str:
     stmt = statements[0]
     if isinstance(stmt, WRITE_STATEMENTS) and not allow_write:
         raise Denied("The agent may only read.")
+    # SELECT ... INTO <table> (SQL Server/Sybase) parses as an ordinary
+    # exp.Select - sqlglot has no separate node for it - but it creates a
+    # table, a write wearing a SELECT's clothes exactly like INTO OUTFILE
+    # above. Without this it would sail through the read-only check.
+    if isinstance(stmt, exp.Select) and stmt.args.get("into") and not allow_write:
+        raise Denied("The agent may only read.")
     if not isinstance(stmt, READ_STATEMENTS + WRITE_STATEMENTS):
         if re.match(r"^\s*call\b", sql, re.I):
             raise Denied("CALL (a stored procedure) is not something escrowe runs: its "

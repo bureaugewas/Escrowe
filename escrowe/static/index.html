@@ -291,9 +291,9 @@ function paintDbStatus(h){
   dot.classList.toggle("on",!!h.connected);
   const p=h.source.params||{}, kind=h.source.kind;
   let bits=[];
-  if(kind==="mysql") bits=[p.host&&p.port?`${p.host}:${p.port}`:p.host,p.user,p.database];
+  if(kind==="mysql"||kind==="postgres"||kind==="sqlserver") bits=[p.host&&p.port?`${p.host}:${p.port}`:p.host,p.user,p.database];
   else if(kind==="ducklake") bits=[String(p.metadata||"").replace(/^quack:/,""),p.data_path];
-  else if(kind==="duckdb") bits=[p.path];
+  else if(kind==="duckdb"||kind==="sqlite") bits=[p.path];
   label.textContent=`${kind}${bits.filter(Boolean).length?" · "+bits.filter(Boolean).join(" · "):""}`;
   chip.title=`${h.source.name} - ${h.connected?"connected":"configured, not yet connected"}`;
 }
@@ -816,9 +816,14 @@ function ducklakeFields(){return `
   <input id="dqdata" placeholder="s3://bucket/path">`;}
 function duckdbFields(){return `
   <label>File path</label><input id="ddbpath" placeholder="/path/to/database.duckdb">`;}
+function sqliteFields(){return `
+  <label>File path</label><input id="dsqpath" placeholder="/path/to/database.sqlite">`;}
 function kindFields(kind){
   if(kind==="ducklake") return ducklakeFields();
   if(kind==="duckdb") return duckdbFields();
+  if(kind==="sqlite") return sqliteFields();
+  if(kind==="postgres") return dbFields("d",5432);
+  if(kind==="sqlserver") return dbFields("d",1433);
   return dbFields("d",3306);
 }
 
@@ -830,8 +835,10 @@ function openConnect(){
     <div id="cForm">
       <label>Type</label>
       <select id="kind" style="width:100%;padding:9px 10px;font-size:inherit">
-        <option value="mysql">MySQL</option><option value="ducklake">DuckLake</option>
-        <option value="duckdb">DuckDB (local file)</option></select>
+        <option value="mysql">MySQL</option><option value="postgres">PostgreSQL</option>
+        <option value="sqlserver">SQL Server</option><option value="ducklake">DuckLake</option>
+        <option value="duckdb">DuckDB (local file)</option>
+        <option value="sqlite">SQLite (local file)</option></select>
       <label>Name in SQL</label><input id="sname" value="mysql">
       <div id="kindFields"></div>
     </div>
@@ -864,6 +871,8 @@ function collect(){
     if(v("dqdata")) params.data_path=v("dqdata");
   }else if(kind==="duckdb"){
     params={path:v("ddbpath")};
+  }else if(kind==="sqlite"){
+    params={path:v("dsqpath")};
   }else{
     const o={host:v("dhost"),user:v("duser"),password:v("dpass"),database:v("ddb")};
     if(v("dport")) o.port=+v("dport");

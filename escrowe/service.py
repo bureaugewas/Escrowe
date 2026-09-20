@@ -286,6 +286,8 @@ class Escrowe:
             raise
         try:
             table = engine.execute(safe_sql, self.settings.query_timeout_s)
+            if self.settings.max_rows is not None and table.num_rows > self.settings.max_rows:
+                table = table.slice(0, self.settings.max_rows)
         except EngineError as e:
             self._audit(principal, mode, question, sql, safe_sql, "error", str(e), None, start, attempts)
             raise

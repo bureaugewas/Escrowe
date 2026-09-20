@@ -20,6 +20,8 @@ dependencies = [
   "rich>=13",
   "anthropic>=1.0",
   "pymysql>=1.1",
+  "psycopg[binary]>=3.1", # engines/postgres.py
+  "pymssql>=2.3",         # engines/sqlserver.py: pure-C TDS client, no ODBC driver needed
   "duckdb>=1.4",          # engines/ducklake.py: DuckDB is DuckLake's own client library
 ]
 
