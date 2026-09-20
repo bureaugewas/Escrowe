@@ -32,6 +32,7 @@ except ImportError:
 
 import typer
 from rich.console import Console
+from rich.markup import escape
 from rich.table import Table
 
 from . import llm_login
@@ -43,8 +44,14 @@ app = typer.Typer(add_completion=False, invoke_without_command=True,
 console = Console()
 SESSION_FILE = Path(os.environ.get("ESCROWE_HOME", Path.home() / ".escrowe")).expanduser() / "session.json"
 IDLE_MINUTES = float(os.environ.get("ESCROWE_IDLE_MINUTES", "30"))
-BLUE = "#6cb6ff"                       # the escrowe light blue
+BLUE = "bright_blue"                   # the escrowe blue - a named ANSI color, not a custom
+                                       # truecolor hex: some terminals don't advertise
+                                       # truecolor support and downsample an arbitrary RGB
+                                       # value unpredictably, but every terminal that does
+                                       # color at all recognizes the 16 standard names exactly.
 NAME = f"[bold {BLUE}]Escrowe[/]"
+CMD_STYLE = "blue"                     # the plain (non-bright) variant - inherently darker
+                                       # than BLUE above - the \command column in \help
 LLM_STYLE = "#b7c6d9"                  # light grey-blue - readable body text, not a heading
 LLM_INDENT = "  "
 
@@ -420,16 +427,25 @@ def _repl(conn, idle_minutes: float = IDLE_MINUTES, prompt: str = None) -> str:
             return "quit"
         try:
             if line == "\\help":
-                console.print("question text     the agent writes SQL from the schema; you get the rows\n"
-                              "\\sql <query>      run SQL yourself, as your own connected account\n"
-                              "\\meta             the schema the agent sees\n"
-                              "\\audit            recent decisions\n"
-                              "\\export <file>    last result → .csv / .parquet / .json\n"
-                              "\\json             last result as JSON\n"
-                              "\\feed <question>  [experimental] ask about the last result's own data (no schema, no new query)\n"
-                              "\\llmsetup         restart the LLM setup (browser login or API key), from scratch\n"
-                              "\\database         disconnect and choose a different database, from scratch\n"
-                              "\\q                quit")
+                # highlight=False: Rich's automatic highlighter otherwise tints things
+                # like \sql/<query> as if they were code tokens, in a color nobody
+                # chose on purpose. Explicit markup here instead - and the description
+                # text is escaped since it can contain a literal "[...]" (\feed's
+                # "[experimental]") that markup would otherwise try to parse as a tag.
+                HELP_ITEMS = [
+                    ("question text", "the agent writes SQL from the schema; you get the rows"),
+                    ("\\sql <query>", "run SQL yourself, as your own connected account"),
+                    ("\\meta", "the schema the agent sees"),
+                    ("\\audit", "recent decisions"),
+                    ("\\export <file>", "last result → .csv / .parquet / .json"),
+                    ("\\json", "last result as JSON"),
+                    ("\\feed <question>", "[experimental] ask about the last result's own data (no schema, no new query)"),
+                    ("\\llmsetup", "restart the LLM setup (browser login or API key), from scratch"),
+                    ("\\database", "disconnect and choose a different database, from scratch"),
+                    ("\\q", "quit"),
+                ]
+                console.print("\n".join(f"[{CMD_STYLE}]{cmd:<18}[/]{escape(desc)}" for cmd, desc in HELP_ITEMS),
+                             highlight=False)
             elif line == "\\feed" or line.startswith("\\feed "):
                 feed_question = line[len("\\feed"):].strip()
                 if not last:
