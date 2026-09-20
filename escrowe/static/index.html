@@ -179,11 +179,8 @@
   <header>
     <b>Escrowe</b>
     <span class="chip edit-only" id="whoami"></span>
-    <span class="chip edit-only" id="dbStatus" title=""><span class="dot" id="dbDot"></span><span id="dbLabel">not connected</span></span>
     <span class="sep edit-only"></span>
     <input id="nbName" placeholder="untitled notebook" title="Notebook name">
-    <button class="ghost sm edit-only" id="openBtn">Open</button>
-    <button class="ghost sm edit-only" id="saveBtn">Save</button>
     <span class="dim edit-only" id="saveMsg"></span>
     <span class="spacer"></span>
     <span class="dim edit-only" id="idle"></span>
@@ -191,13 +188,17 @@
     <button class="sm" id="presentBtn">Present</button>
     <span class="sep edit-only"></span>
     <button class="ghost sm edit-only" id="sbBtn" title="Show or hide the schema">Schema</button>
-    <button class="ghost sm edit-only" id="connBtn">Connect database</button>
     <button class="ghost sm edit-only" id="auditBtn">Audit</button>
     <button class="ghost sm edit-only" id="outBtn">Log out</button>
   </header>
 
   <main>
     <div class="sidebarcol" id="sidebarcol">
+      <section class="panel" id="dbPanel">
+        <div class="row"><b style="font-size:13px">Database</b></div>
+        <div class="chip edit-only" id="dbStatus" title="" style="margin-top:6px;cursor:pointer;display:inline-flex">
+          <span class="dot" id="dbDot"></span><span id="dbLabel">not connected</span></div>
+      </section>
       <section class="panel" id="nbPanel">
         <div class="row"><b style="font-size:13px">Notebooks</b>
           <span class="spacer"></span><button class="ghost sm" id="nbNewBtn" title="Start a new notebook">+ New</button></div>
@@ -228,7 +229,7 @@
 
 <script>
 const $=id=>document.getElementById(id), esc=s=>String(s??"").replace(/[&<>"]/g,c=>({"&":"&amp;","<":"&lt;",">":"&gt;",'"':"&quot;"}[c]));
-let S={token:null,user:null,idleAt:0,present:false,nb:{name:"",cells:[]},results:{}};
+let S={token:null,user:null,idleAt:0,present:false,nb:{name:"",cells:[],source:null},results:{}};
 const IDLE_MS=30*60*1000, DRAFT_KEY="escrowe.notebook.draft";
 const uid=()=>Math.random().toString(36).slice(2,10);
 const HAS_PLOT=typeof Plot!=="undefined"&&typeof d3!=="undefined";
@@ -746,7 +747,7 @@ function autoSaveNotebook(){
     name=`Untitled ${new Date().toISOString().slice(0,16).replace("T","-").replace(":","-")}`;
     $("nbName").value=name;
   }
-  api("/notebooks/"+encodeURIComponent(name),{method:"PUT",body:{cells:cleanCells()}})
+  api("/notebooks/"+encodeURIComponent(name),{method:"PUT",body:{cells:cleanCells(),source:S.nb.source||null}})
     .then(d=>{ $("saveMsg").textContent=`saved ${d.saved_at.slice(11,16)}`; loadNbSidebar(); })
     .catch(e=>{ $("saveMsg").innerHTML=`<span style="color:var(--bad)">${esc(e.message)}</span>`; });
 }
@@ -755,87 +756,93 @@ function loadDraft(){
 }
 $("nbName").oninput=saveDraft;
 
-// The button (and ⌘S) just forces the same autosave to happen right now, instead of
-// waiting for the debounce - saving was never actually gated on clicking this.
+// ⌘S forces the same autosave to happen right now, instead of waiting for the
+// debounce - saving is never actually gated on this, there's no button for it.
 function saveNotebook(){ clearTimeout(draftT); $("saveMsg").innerHTML=`saving <span class="spin"></span>`; autoSaveNotebook(); }
-$("saveBtn").onclick=saveNotebook;
 document.addEventListener("keydown",e=>{ if((e.metaKey||e.ctrlKey)&&e.key==="s"&&S.token){ e.preventDefault(); saveNotebook(); } });
+
+// A notebook's own database, ignoring secrets (a saved source never carries one - see
+// clean_source on the server) - used to tell whether opening a notebook needs a
+// reconnect, not just a cosmetic label difference.
+function sourceSig(s){ if(!s) return null; const {password,token,...rest}=s.params||{};
+  return JSON.stringify({kind:s.kind,params:rest}); }
 
 async function openNotebook(name){
   const d=await api("/notebooks/"+encodeURIComponent(name));
-  S.nb={name,cells:d.cells.map(c=>({...c,chart:c.chart||{type:"auto"}}))}; S.results={};
+  S.nb={name,cells:d.cells.map(c=>({...c,chart:c.chart||{type:"auto"}})),source:d.source||null}; S.results={};
   // Each cell's last result was saved alongside it: show it instantly, no query, no
   // agent call. A cell with nothing cached (added but never run before saving) just
   // shows "not run yet" - Run/Run all is one click away when a refresh is wanted.
   for(const c of S.nb.cells) if(c.result) S.results[c.id]=analyze(c.result);
   $("nbName").value=name; $("saveMsg").textContent=""; closeModal(); renderAll(); saveDraft(); loadNbSidebar();
+  // This notebook was saved against a specific database, and it isn't the one
+  // currently connected: prompt to reconnect rather than silently querying the
+  // wrong database (or an agent writing SQL against the wrong schema).
+  if(d.source){
+    const h=await api("/health",{auth:false});
+    if(sourceSig(d.source)!==sourceSig(h.source)) openConnect(d.source, name);
+  }
 }
-// Sidebar tile: every saved notebook, one click to switch, current one highlighted -
-// the modal-based Open list (openList) is still there for its Delete action.
+// Sidebar tile: every saved notebook, one click to switch, current one highlighted,
+// with its own small delete action (Open/Save as standalone buttons are gone -
+// switching and autosave cover what those did).
 async function loadNbSidebar(){
   const el=$("nbSidebarList"); if(!el) return;
   try{
     const d=await api("/notebooks");
     el.innerHTML=d.notebooks.length?d.notebooks.map(n=>`
-      <div class="nbrow2${n.name===S.nb.name?" on":""}" onclick="openNotebook('${esc(n.name)}')" title="${esc(n.cells)} cells">
-        <span class="n">${esc(n.name)}</span><span class="dim">${n.cells}</span></div>`).join("")
-      : `<div class="dim">none yet - Save this one to start.</div>`;
+      <div class="nbrow2${n.name===S.nb.name?" on":""}" title="${esc(n.cells)} cells">
+        <span class="n" onclick="openNotebook('${esc(n.name)}')">${esc(n.name)}</span>
+        <span class="dim">${n.cells}</span>
+        <span class="ghost sm" title="Delete" onclick="event.stopPropagation();deleteNotebook('${esc(n.name)}')" style="cursor:pointer;padding:0 4px">×</span>
+      </div>`).join("")
+      : `<div class="dim">none yet - write something to start.</div>`;
   }catch{ el.innerHTML=`<div class="dim">couldn't load</div>`; }
 }
 $("nbNewBtn").onclick=()=>{
-  S.nb={name:"",cells:[]}; S.results={}; addCell("ask",false);
+  S.nb={name:"",cells:[],source:null}; S.results={}; addCell("ask",false);
   $("nbName").value=""; $("saveMsg").textContent=""; renderAll(); saveDraft(); loadNbSidebar();
 };
-async function openList(){
-  openModal(`<h1 style="font-size:16px;margin:0 0 4px">Notebooks</h1>
-    <div class="dim">Saved on this machine, in escrowe's home folder, with each cell's last result - opening one shows it instantly; Run/Run all refreshes.</div>
-    <div id="nbList" style="margin-top:12px" class="dim">loading…</div>
-    <div class="row" style="margin-top:14px"><button class="ghost" onclick="closeModal()">Close</button></div>`);
-  try{
-    const d=await api("/notebooks");
-    $("nbList").innerHTML=d.notebooks.length?d.notebooks.map(n=>`<div class="nbrow">
-        <b>${esc(n.name)}</b><span class="chip">${n.cells} cells</span><span class="dim">${esc((n.saved_at||"").replace("T"," ").slice(0,16))}</span>
-        <span class="spacer"></span>
-        <button class="sm" onclick="openNotebook('${esc(n.name)}')">Open</button>
-        <button class="ghost sm" onclick="deleteNotebook('${esc(n.name)}')">Delete</button></div>`).join("")
-      :`<div class="dim">No notebooks saved yet. Name this one in the header and press Save.</div>`;
-  }catch(e){ $("nbList").innerHTML=`<div class="banner bad">${esc(e.message)}</div>`; }
-}
 async function deleteNotebook(name){
   if(!confirm(`Delete notebook "${name}"?`)) return;
-  await api("/notebooks/"+encodeURIComponent(name),{method:"DELETE"}); openList(); loadNbSidebar();
+  await api("/notebooks/"+encodeURIComponent(name),{method:"DELETE"}); loadNbSidebar();
 }
-$("openBtn").onclick=openList;
 
 /* ----------------------------------------------------------- connect */
-function dbFields(p,port){return `<div class="grid2">
-    <div><label>Host</label><input id="${p}host" value="127.0.0.1"></div>
-    <div><label>Port</label><input id="${p}port" value="${port||""}"></div></div>
+function dbFields(p,port,pf){pf=pf||{};return `<div class="grid2">
+    <div><label>Host</label><input id="${p}host" value="${esc(pf.host||"127.0.0.1")}"></div>
+    <div><label>Port</label><input id="${p}port" value="${esc(pf.port||port||"")}"></div></div>
   <div class="grid2">
-    <div><label>User</label><input id="${p}user"></div>
+    <div><label>User</label><input id="${p}user" value="${esc(pf.user||"")}"></div>
     <div><label>Password</label><input id="${p}pass" type="password"></div></div>
-  <label>Database</label><input id="${p}db">`;}
-function ducklakeFields(){return `
-  <label>Quack server (host:port)</label><input id="dqhost" value="127.0.0.1:443">
+  <label>Database</label><input id="${p}db" value="${esc(pf.database||"")}">`;}
+function ducklakeFields(pf){pf=pf||{};return `
+  <label>Quack server (host:port)</label><input id="dqhost" value="${esc(String(pf.metadata||"").replace(/^quack:/,"")||"127.0.0.1:443")}">
   <label>Quack token</label><input id="dqtoken" type="password">
   <label>Data path <span class="dim"> - s3://…, r2://…; only needed the first time this catalog is used</span></label>
-  <input id="dqdata" placeholder="s3://bucket/path">`;}
-function duckdbFields(){return `
-  <label>File path</label><input id="ddbpath" placeholder="/path/to/database.duckdb">`;}
-function sqliteFields(){return `
-  <label>File path</label><input id="dsqpath" placeholder="/path/to/database.sqlite">`;}
-function kindFields(kind){
-  if(kind==="ducklake") return ducklakeFields();
-  if(kind==="duckdb") return duckdbFields();
-  if(kind==="sqlite") return sqliteFields();
-  if(kind==="postgres") return dbFields("d",5432);
-  if(kind==="sqlserver") return dbFields("d",1433);
-  return dbFields("d",3306);
+  <input id="dqdata" placeholder="s3://bucket/path" value="${esc(pf.data_path||"")}">`;}
+function duckdbFields(pf){return `
+  <label>File path</label><input id="ddbpath" placeholder="/path/to/database.duckdb" value="${esc((pf||{}).path||"")}">`;}
+function sqliteFields(pf){return `
+  <label>File path</label><input id="dsqpath" placeholder="/path/to/database.sqlite" value="${esc((pf||{}).path||"")}">`;}
+function kindFields(kind,pf){
+  if(kind==="ducklake") return ducklakeFields(pf);
+  if(kind==="duckdb") return duckdbFields(pf);
+  if(kind==="sqlite") return sqliteFields(pf);
+  if(kind==="postgres") return dbFields("d",5432,pf);
+  if(kind==="sqlserver") return dbFields("d",1433,pf);
+  return dbFields("d",3306,pf);
 }
 
-function openConnect(){
+// `prefill` is a notebook's saved (secret-free) source, offered when opening a
+// notebook whose database isn't the one currently connected - `forNotebook` names
+// it in the dialog. Neither argument is passed for an ordinary "Connect database".
+function openConnect(prefill,forNotebook){
+  const pf=prefill||{};
   openModal(`<h1 style="font-size:16px;margin:0 0 4px">Connect a database</h1>
-    <div class="dim">Escrowe connects with this account directly. Its own grants decide what the agent - and you - can do.</div>
+    <div class="dim">${forNotebook
+        ?`"${esc(forNotebook)}" was saved against a different database - reconnect to open it, or connect elsewhere.`
+        :`Escrowe connects with this account directly. Its own grants decide what the agent - and you - can do.`}</div>
     <div class="tabs" style="margin-top:12px">
       <button class="on" data-c="form">Fill in details</button><button data-c="dsn">Paste a connection string</button></div>
     <div id="cForm">
@@ -845,7 +852,7 @@ function openConnect(){
         <option value="sqlserver">SQL Server</option><option value="ducklake">DuckLake</option>
         <option value="duckdb">DuckDB (local file)</option>
         <option value="sqlite">SQLite (local file)</option></select>
-      <label>Name in SQL</label><input id="sname" value="mysql">
+      <label>Name in SQL</label><input id="sname" value="${esc(pf.name||"mysql")}">
       <div id="kindFields"></div>
     </div>
     <div id="cDsn" class="hide">
@@ -858,7 +865,9 @@ function openConnect(){
     <div id="cMsg"></div>
     <div id="cList" style="margin-top:16px"></div>`);
 
-  const paint=()=>{ $("kindFields").innerHTML=kindFields($("kind").value); $("sname").value=$("kind").value; };
+  if(pf.kind) $("kind").value=pf.kind;
+  const paint=()=>{ $("kindFields").innerHTML=kindFields($("kind").value,$("kind").value===pf.kind?pf.params:null);
+    if($("kind").value!==pf.kind) $("sname").value=$("kind").value; };
   paint(); $("kind").onchange=paint;
   document.querySelectorAll("#modal .tabs button").forEach(b=>b.onclick=()=>{
     document.querySelectorAll("#modal .tabs button").forEach(x=>x.classList.remove("on")); b.classList.add("on");
@@ -890,9 +899,14 @@ function collect(){
 async function submitConnect(){
   $("cGo").disabled=true; $("cMsg").innerHTML=`<div class="dim" style="margin-top:10px">connecting <span class="spin"></span></div>`;
   try{
-    const d=await api("/sources",{method:"POST",body:collect()});
+    const req=collect();
+    const d=await api("/sources",{method:"POST",body:req});
     $("cMsg").innerHTML=`<div class="banner ok"><b>Connected ${esc(d.name)}</b> - ${d.tables.length} tables.</div>`;
     await listSources(); await loadSchema(); paintDbStatus(await api("/health",{auth:false}));
+    // Bind the open notebook to this database, so switching back to it later
+    // reconnects here automatically instead of silently querying whatever else
+    // happens to be connected at the time.
+    if(!req.dsn){ S.nb.source={name:d.name,kind:req.kind,params:req.params}; saveDraft(); }
   }catch(e){ $("cMsg").innerHTML=`<div class="banner bad">${esc(e.message)}</div>`; }
   $("cGo").disabled=false;
 }
@@ -926,7 +940,7 @@ async function openAudit(){
 function openModal(html){ $("modal").innerHTML=html; $("overlay").classList.remove("hide"); }
 function closeModal(){ $("overlay").classList.add("hide"); }
 $("overlay").onclick=e=>{ if(e.target.id==="overlay") closeModal(); };
-$("connBtn").onclick=openConnect; $("auditBtn").onclick=openAudit; $("outBtn").onclick=()=>logout();
+$("dbStatus").onclick=()=>openConnect(); $("auditBtn").onclick=openAudit; $("outBtn").onclick=()=>logout();
 
 // Logging out drops the token and every cached result; the cell definitions
 // stay (and live on in the local draft), so logging back in doesn't lose work.

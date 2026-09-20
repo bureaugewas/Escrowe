@@ -391,7 +391,8 @@ class Escrowe:
             if on_status:
                 on_status("running the query")
             try:
-                result = self.sql(principal, proposal.sql, mode="ask", question=question, attempts=n,
+                result = self.sql(principal, proposal.sql, mode="probe" if proposal.probe else "ask",
+                                  question=question, attempts=n,
                                   provider=proposal.provider, allow_write=False)
             except (Denied, EngineError) as e:
                 last_error = e

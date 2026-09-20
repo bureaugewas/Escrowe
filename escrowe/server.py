@@ -19,7 +19,7 @@ from .config import load_settings
 from .engines import EngineError
 from .guard import Denied
 from .service import AuthError, Escrowe, Principal
-from .sources import Source, parse_source_dsn
+from .sources import SECRET_KEYS, Source, parse_source_dsn
 
 
 class LoginBody(BaseModel):
@@ -44,6 +44,7 @@ class SourceBody(BaseModel):
 
 class NotebookBody(BaseModel):
     cells: list[dict]
+    source: Optional[dict] = None   # which database this notebook connects to (see clean_source)
 
 
 # A notebook is its cells: the SQL/question text, how to chart it, and (so
@@ -218,6 +219,22 @@ def create_app(escrowe: Escrowe | None = None, local_operator: bool = False) -> 
             out.append(kept)
         return out
 
+    def clean_source(source: dict | None) -> dict | None:
+        """What a notebook may remember about its database: name, kind, and
+        non-secret params - a client-sent password or token is stripped here
+        too, never trusted or written to disk, same guarantee as Source's own
+        persisted_json(). None clears the notebook's binding (it follows
+        whatever is currently connected instead)."""
+        if not source:
+            return None
+        if not isinstance(source, dict) or not source.get("kind"):
+            raise HTTPException(400, "A notebook's source needs at least a kind.")
+        params = source.get("params") or {}
+        if not isinstance(params, dict):
+            raise HTTPException(400, "A notebook's source params must be an object.")
+        return {"name": source.get("name") or source["kind"], "kind": source["kind"],
+                "params": {k: v for k, v in params.items() if k not in SECRET_KEYS}}
+
     @app.get("/notebooks")
     def list_notebooks(p: Principal = Depends(principal)):
         items = []
@@ -226,7 +243,8 @@ def create_app(escrowe: Escrowe | None = None, local_operator: bool = False) -> 
                 try:
                     d = json.loads(f.read_text())
                     items.append({"name": f.stem, "cells": len(d.get("cells", [])),
-                                  "saved_at": d.get("saved_at"), "saved_by": d.get("saved_by")})
+                                  "saved_at": d.get("saved_at"), "saved_by": d.get("saved_by"),
+                                  "source": d.get("source")})
                 except (OSError, ValueError):
                     continue
         return {"notebooks": items}
@@ -244,7 +262,7 @@ def create_app(escrowe: Escrowe | None = None, local_operator: bool = False) -> 
     @app.put("/notebooks/{name}")
     def put_notebook(name: str, body: NotebookBody, p: Principal = Depends(principal)):
         path = nb_path(name)
-        doc = {"name": name, "cells": clean_cells(body.cells),
+        doc = {"name": name, "cells": clean_cells(body.cells), "source": clean_source(body.source),
                "saved_at": time.strftime("%Y-%m-%dT%H:%M:%S"), "saved_by": p.user}
         nb_dir.mkdir(parents=True, exist_ok=True)
         tmp = path.with_suffix(".json.tmp")

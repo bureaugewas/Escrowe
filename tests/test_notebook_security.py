@@ -33,6 +33,21 @@ def test_put_notebook_strips_smuggled_keys_from_the_saved_file(svc, client_heade
     assert "password" not in cell and "arbitrary_key" not in cell
 
 
+def test_put_notebook_strips_secrets_from_a_saved_source(svc, client_headers):
+    client, headers = client_headers
+    body = {"cells": [], "source": {"name": "shop", "kind": "mysql",
+                                     "params": {"host": "db1", "user": "ro",
+                                                "password": "smuggled-secret", "token": "also-secret"}}}
+    r = client.put("/notebooks/mynb", json=body, headers=headers)
+    assert r.status_code == 200
+
+    saved = (svc.settings.home / "notebooks" / "mynb.json").read_text()
+    assert "smuggled-secret" not in saved and "also-secret" not in saved
+
+    source = client.get("/notebooks/mynb", headers=headers).json()["source"]
+    assert source == {"name": "shop", "kind": "mysql", "params": {"host": "db1", "user": "ro"}}
+
+
 def test_put_notebook_rejects_a_cell_with_no_recognized_kind(svc, client_headers):
     client, headers = client_headers
     r = client.put("/notebooks/mynb", json={"cells": [{"kind": "shell", "text": "rm -rf /"}]}, headers=headers)
