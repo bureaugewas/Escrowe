@@ -11,8 +11,8 @@ ruff check .
 
 The suite runs against an in-memory fake engine (`tests/fake_engine.py`) and
 needs no database. The per-engine tests (`tests/test_*_direct.py`) connect to
-real servers from `docker/` and skip themselves when those are not running;
-see `docker/README.md`.
+real servers from `tests/docker/` and skip themselves when those are not
+running; see `tests/docker/README.md`.
 
 ## Where things live
 
@@ -34,7 +34,7 @@ see `docker/README.md`.
    table there.
 2. Register it in `escrowe/engines/__init__.py`.
 3. If sqlglot has a dialect for it, add the mapping in `escrowe/guard.py`.
-4. Add a `tests/test_<kind>_direct.py` and a service to `docker/`.
+4. Add a `tests/test_<kind>_direct.py` and a service to `tests/docker/`.
 
 ## The one rule
 
