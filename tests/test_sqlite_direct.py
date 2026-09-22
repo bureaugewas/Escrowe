@@ -6,7 +6,7 @@ from pathlib import Path
 
 import pytest
 
-sys.path.insert(0, str(Path(__file__).parent.parent / "docker"))
+sys.path.insert(0, str(Path(__file__).parent / "docker"))
 from seed_sqlite import seed  # noqa: E402
 
 
