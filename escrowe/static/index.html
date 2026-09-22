@@ -670,8 +670,10 @@ function toggleCfg(id,force){
 }
 function toggleY(id,el){
   const c=cell(id), r=S.results[id], sp=spec(c,r);
-  const chosen=[...el.closest(".ymulti").querySelectorAll("input[type=checkbox]")]
-    .filter(cb=>cb.checked).map(cb=>cb.value);
+  // Keep the order the series were picked in - a new one goes last - so the
+  // colors already on the chart stay put when a box is toggled.
+  const prev=Array.isArray(sp.y)?sp.y:sp.y?[sp.y]:[];
+  const chosen=el.checked?[...prev.filter(y=>y!==el.value),el.value]:prev.filter(y=>y!==el.value);
   c.chart={...(c.chart||{}), type:c.chart?.type&&c.chart.type!=="auto"?c.chart.type:sp.type,
            x:sp.x, y:chosen.length?(chosen.length===1?chosen[0]:chosen):null, color:null, size:sp.size, view:"chart"};
   renderOut(id); saveDraft(); if(c._cfgOpen) toggleCfg(id,true);
