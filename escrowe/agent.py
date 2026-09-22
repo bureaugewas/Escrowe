@@ -111,7 +111,7 @@ class AgentResult:
 
 # ----------------------------------------------------------- reply parsing
 
-_SQL_START = re.compile(r"^\s*(WITH|SELECT)\b", re.I)
+_SQL_START = re.compile(r"^\s*(WITH|SELECT|PIVOT|FROM)\b", re.I)
 _FENCE = re.compile(r"```(?:sql)?\s*(.+?)```", re.I | re.S)
 _PROBE_LINE = re.compile(r"^\s*--\s*probe\b[^\n]*\n?", re.I)
 
