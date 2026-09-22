@@ -10,7 +10,7 @@ dist/
 
 # Local state and secrets
 .env
-docker/sample.sqlite
+tests/docker/sample.sqlite
 
 # Editors and OS
 .DS_Store

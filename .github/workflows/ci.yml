@@ -30,7 +30,7 @@ jobs:
           python-version: ${{ matrix.python-version }}
       - run: pip install -e ".[dev]"
       # The per-engine tests (tests/test_*_direct.py) need the docker
-      # services in docker/ and skip themselves when those are absent.
+      # services in tests/docker/ and skip themselves when those are absent.
       # Everything else runs against the in-memory fake engine.
       - run: pytest -q
 

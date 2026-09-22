@@ -1,5 +1,5 @@
 """SQLite, end to end, against a real file. No container is needed: the
-sample database is generated into a temp directory by docker/seed_sqlite.py."""
+sample database is generated into a temp directory by tests/docker/seed_sqlite.py."""
 
 import sys
 from pathlib import Path

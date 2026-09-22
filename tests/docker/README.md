@@ -11,7 +11,7 @@ column/table comments. SQLite needs no container, see below.
 ## Bring it up
 
 ```sh
-cd docker
+cd tests/docker
 docker compose up -d
 ```
 
@@ -19,7 +19,7 @@ Wait for the containers to report healthy (`docker compose ps`) before
 running the tests - first boot loads the init SQL, which takes a few seconds
 per engine. The SQL Server init runs as a one-shot sidecar
 (`escrowe-test-sqlserver-init`) that waits for the server's healthcheck, then
-runs `docker/init/sqlserver.sql` with `sqlcmd`; check `docker compose logs
+runs `tests/docker/init/sqlserver.sql` with `sqlcmd`; check `docker compose logs
 escrowe-test-sqlserver-init` if the SQL Server tests find no tables.
 
 ## What's inside
@@ -54,8 +54,8 @@ own copy in a temp directory, so nothing needs to be run first. To get a
 sample file to play with:
 
 ```sh
-python docker/seed_sqlite.py            # writes docker/sample.sqlite (git-ignored)
-escrowe connect sqlite:docker/sample.sqlite
+python tests/docker/seed_sqlite.py      # writes tests/docker/sample.sqlite (git-ignored)
+escrowe connect sqlite:tests/docker/sample.sqlite
 ```
 
 SQLite has no table or column comments, so the schema the agent sees has none.

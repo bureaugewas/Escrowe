@@ -1,8 +1,8 @@
 """Create a SQLite file with the same sample schema and data as the MySQL,
-Postgres and SQL Server containers (docker/init/*.sql). No container is
+Postgres and SQL Server containers (tests/docker/init/*.sql). No container is
 needed for SQLite; tests/test_sqlite_direct.py calls seed() itself.
 
-    python docker/seed_sqlite.py [path]     default: docker/sample.sqlite
+    python tests/docker/seed_sqlite.py [path]     default: tests/docker/sample.sqlite
 """
 
 from __future__ import annotations

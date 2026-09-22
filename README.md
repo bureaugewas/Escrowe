@@ -162,7 +162,7 @@ else. `tests/test_blind.py` and `tests/test_no_data_leaks.py` verify this.
 
 ```bash
 pip install -e ".[dev]"
-pytest          # fake in-memory engine; live engines via docker/ (see docker/README.md)
+pytest          # fake in-memory engine; live engines via tests/docker/ (see tests/docker/README.md)
 ruff check .
 ```
 
