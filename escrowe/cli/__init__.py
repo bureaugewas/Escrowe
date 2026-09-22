@@ -200,7 +200,8 @@ def _open(local: bool, dsn: str | None, user: str | None, password: str | None):
             raise EscroweAuthError("--dsn needs credentials: escrowe://user:password@host:port")
         return conn
     if not SESSION_FILE.exists():
-        console.print("[red]Not logged in.[/] Run: escrowe login")
+        console.print("[red]No server session.[/] Add [bold]--local[/] to query the connected database "
+                      "in this process, or sign in to an Escrowe server: [bold]escrowe login --server URL[/]")
         raise typer.Exit(1)
     saved = json.loads(SESSION_FILE.read_text())
     conn = Connection(saved["server"])
@@ -309,7 +310,10 @@ def serve(host: str = "127.0.0.1", port: int = 8765):
 def login(server: str = typer.Option(None, help="Escrowe server URL"),
           user: str = typer.Option(None, prompt=True),
           password: str = typer.Option(None, prompt=True, hide_input=True)):
-    """Log in to a server with your database account; later commands reuse the session."""
+    """Sign in to an Escrowe server with your database account; later commands reuse the session.
+
+    Not needed for --local commands. For Claude, use `escrowe claude login`.
+    """
     server = server or load_settings().server_url
     try:
         conn = Connection(server, user, password)

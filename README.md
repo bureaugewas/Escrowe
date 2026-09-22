@@ -31,11 +31,23 @@ LLM is written to a transcript you can inspect with `escrowe llm-log`.
 
 ## Install
 
+With [pipx](https://pipx.pypa.io) (recommended: an isolated environment, and `escrowe` on your PATH):
+
 ```bash
-pip install -e .
+pipx install "git+https://github.com/bureaugewas/Escrowe.git"
 ```
 
-Python 3.10 or newer.
+Or with pip, into your current environment:
+
+```bash
+pip install "git+https://github.com/bureaugewas/Escrowe.git"
+```
+
+Either way this clones and installs escrowe for you; you don't need a local
+checkout first. Python 3.10 or newer.
+
+To work on escrowe itself, clone it and install in editable mode instead —
+see [CONTRIBUTING.md](CONTRIBUTING.md).
 
 ## Use
 

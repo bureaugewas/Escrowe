@@ -25,7 +25,7 @@ def test_http_ask_and_sql_are_machine_readable(http):
     with http("bob", "bob") as conn:
         r = conn.ask("how many orders")
         d = json.loads(r.to_json())
-        assert d["sql"].lower().startswith("select") and d["columns"] == ["n"] and d["rows"] == [[1370]]
+        assert d["sql"].lower().startswith("select") and d["rows"] == [{"n": 1370}]
         assert d["question"] == "how many orders" and d["audit_id"]
         r2 = conn.sql("SELECT count(*) AS n FROM employees")
         assert r2.records() == [{"n": 2}]
