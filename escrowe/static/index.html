@@ -85,7 +85,7 @@
   .ico{width:14px;height:14px;flex:none;color:var(--dim)}
   .chev{color:var(--dim);font-size:9px;width:9px;display:inline-block;transition:transform .15s;flex:none}
   details[open]>summary>.chev{transform:rotate(90deg)}
-  .schemaBody{padding:0 0 2px 8px;margin-left:11px;border-left:1px solid rgba(128,140,160,.35)}
+  .schemaBody{padding:0 0 1px 4px;margin-left:7px;border-left:1px solid rgba(128,140,160,.35)}
   .cnt{margin-left:auto;font-size:10px;color:var(--dim);font-weight:400}
   .trow .more{visibility:hidden;padding:0 4px;color:var(--dim);border:0;background:none;font-size:14px;line-height:1;cursor:pointer}
   .trow:hover .more,.trow.on .more{visibility:visible}
@@ -310,7 +310,7 @@ const ICON={
   table:`<svg class="ico" viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.3"><rect x="1.5" y="2.5" width="13" height="11" rx="1"/><path d="M1.5 6h13M1.5 9.5h13M6 6v7.5M10.5 6v7.5"/></svg>`};
 
 // What the tree knows, so a hover panel can be built from an id alone.
-let META={source:null,connected:false,schemas:new Map()};
+let META={sources:[],source:null,connected:false,schemas:new Map()};
 
 // Connection facts for the database panel - never a secret (the server redacts
 // the source before it gets here).
@@ -322,18 +322,17 @@ function sourceFacts(src){
   return f.filter(([,v])=>v!==undefined&&v!==null&&v!=="");
 }
 
-// The sidebar tree, DuckDB-style: the database is the root, its schemas and
-// tables hang below. A configured-but-unreachable database still shows, dimmed,
-// so the saved connection isn't lost from view.
+// The sidebar tree, DuckDB-style: every saved database is a root; the active
+// one carries its schemas and tables, the others sit dimmed until reconnected.
 async function loadSchema(){
   let h={};
   try{
-    h=await api("/health",{auth:false});
-    if(!h.source){ $("schema").innerHTML=`<div class="dim">none yet - <a href="#" onclick="openConnect();return false">connect one</a>.</div>`; return h; }
+    const [srcs,health]=await Promise.all([api("/sources"),api("/health",{auth:false})]); h=health;
+    META={sources:srcs.sources,source:h.source,connected:!!h.connected,schemas:new Map()};
+    if(!META.sources.length){ $("schema").innerHTML=`<div class="dim">none yet - <a href="#" onclick="openConnect();return false">connect one</a>.</div>`; return h; }
     const d=h.connected?await api("/metadata"):{tables:[]};
     // Group by schema (the part of "schema.table" before the dot; a table with no
     // dot is in the implicit "main" schema).
-    META={source:h.source,connected:!!h.connected,schemas:new Map()};
     for(const t of d.tables){
       const dot=t.table.indexOf(".");
       const schema=dot===-1?"main":t.table.slice(0,dot), short=dot===-1?t.table:t.table.slice(dot+1);
@@ -341,29 +340,32 @@ async function loadSchema(){
       META.schemas.get(schema).push({...t,short,schema});
     }
     const schemas=[...META.schemas.keys()].sort();
-    $("schema").innerHTML=`<details open>
-      <summary class="trow db${h.connected?"":" off"}" data-pop="db">${ICON.db}<span class="n">${esc(h.source.name)}</span>
-        <span class="cnt">${h.connected?esc(h.source.kind):"not connected"}</span></summary>
-      <div class="schemaBody">${schemas.length?schemas.map(sc=>`<details${schemas.length===1?" open":""}>
+    const dbRow=src=>`<summary class="trow db${src.connected?"":" off"}" data-pop="db" data-key="${esc(src.name)}">${ICON.db}<span class="n">${esc(src.name)}</span>
+        <span class="cnt">${src.connected?esc(src.kind):"not connected"}</span>
+        <button class="more" title="Actions" onclick="openDbMenu(event,'${esc(src.name)}')">⋯</button></summary>`;
+    $("schema").innerHTML=META.sources.map(src=>`<details${src.connected?" open":""}>${dbRow(src)}
+      <div class="schemaBody">${!src.connected?`<div class="dim" style="padding:2px 4px">not connected</div>`
+        :schemas.length?schemas.map(sc=>`<details${schemas.length===1?" open":""}>
         <summary class="trow schema" data-pop="schema" data-key="${esc(sc)}">${ICON.schema}<span class="n">${esc(sc)}</span>
           <span class="cnt">${META.schemas.get(sc).length}</span></summary>
         <div class="schemaBody">${META.schemas.get(sc).map(t=>`
           <div class="trow" data-pop="table" data-key="${esc(t.table)}">${ICON.table}<span class="n">${esc(t.short)}</span>
             <span class="cnt">${t.approx_rows??""}</span>
             <button class="more" title="Actions" onclick="openTableMenu(event,'${esc(t.table)}')">⋯</button></div>`).join("")}
-        </div></details>`).join(""):`<div class="dim" style="padding:4px">nothing to see yet</div>`}</div></details>`;
+        </div></details>`).join(""):`<div class="dim" style="padding:2px 4px">nothing to see yet</div>`}</div></details>`).join("");
   }catch(e){ $("schema").innerHTML=`<div class="banner bad">${esc(e.message)}</div>`; }
   return h;
 }
+const findSource=name=>META.sources.find(s=>s.name===name);
 const findTable=fqn=>[...META.schemas.values()].flat().find(t=>t.table===fqn);
 // A value is escaped unless the caller already built markup for it (the status dot).
 const kv=pairs=>`<div class="kv">${pairs.map(([k,v])=>`<span>${esc(k)}</span><span>${k==="status"?v:esc(String(v))}</span>`).join("")}</div>`;
 
 // The hover side panel: what the agent sees about the thing under the mouse.
 function popHtml(kind,key){
-  if(kind==="db"){ const src=META.source;
-    return `<h3>${ICON.db}${esc(src.name)}</h3>${kv([...sourceFacts(src),["status",`<span class="dot${META.connected?" on":""}"></span>${META.connected?"connected":"not connected"}`],
-      ["schemas",META.schemas.size],["tables",[...META.schemas.values()].flat().length]])}`; }
+  if(kind==="db"){ const src=findSource(key); if(!src) return "";
+    return `<h3>${ICON.db}${esc(src.name)}</h3>${kv([...sourceFacts(src),["status",`<span class="dot${src.connected?" on":""}"></span>${src.connected?"connected":"not connected"}`],
+      ...(src.connected?[["schemas",META.schemas.size],["tables",[...META.schemas.values()].flat().length]]:[])])}`; }
   if(kind==="schema"){ const ts=META.schemas.get(key)||[];
     return `<h3>${ICON.schema}${esc(key)}</h3>${kv([["database",META.source.name],["tables",ts.length],
       ["columns",ts.reduce((n,t)=>n+t.columns.length,0)]])}`; }
@@ -399,21 +401,46 @@ document.addEventListener("click",e=>{
   if(!e.target.closest("#menu,.more")) $("menu").classList.add("hide");
 });
 
-// The ⋯ menu on a table row.
-function openTableMenu(e,fqn){
+// A small ⋯ menu anchored to the button that opened it.
+function openMenu(e,items){
   e.stopPropagation(); e.preventDefault(); popPinned=null; hidePop();
-  const t=findTable(fqn); if(!t) return;
-  const ddl=`CREATE TABLE ${fqn} (\n${t.columns.map(c=>`  ${c.name} ${c.type}`).join(",\n")}\n);`;
-  const items=[["Copy name",()=>navigator.clipboard.writeText(t.short)],
-    ["Copy fully qualified name",()=>navigator.clipboard.writeText(`${META.source.name}.${t.schema}.${t.short}`)],
-    ["Copy SQL definition",()=>navigator.clipboard.writeText(ddl)],
-    ["Query in current notebook",()=>queryTable(fqn)]];
   const m=$("menu"); m.innerHTML=items.map(([l],i)=>`<div data-i="${i}">${esc(l)}</div>`).join("");
   m.querySelectorAll("div").forEach(d=>d.onclick=()=>{ items[+d.dataset.i][1](); m.classList.add("hide"); });
   m.classList.remove("hide");
   const r=e.currentTarget.getBoundingClientRect();
   m.style.left=Math.min(r.left,window.innerWidth-m.offsetWidth-8)+"px";
   m.style.top=Math.min(r.bottom+4,window.innerHeight-m.offsetHeight-8)+"px";
+}
+function openDbMenu(e,name){
+  const src=findSource(name); if(!src) return;
+  openMenu(e,[...(src.connected?[]:[["Connect",()=>connectSaved(name)]]),
+    ["Remove",()=>{ if(confirm(`Forget database "${name}"?`)) detach(name); }]]);
+}
+// Reconnect a saved database. Its password (or DuckLake token) was never saved,
+// so ask for it - unless the kind needs none, then just connect.
+async function connectSaved(name){
+  const src=findSource(name), needs=src&&!["sqlite","duckdb"].includes(src.kind);
+  const go=async secret=>{
+    try{ await api(`/sources/${encodeURIComponent(name)}/connect`,{method:"POST",body:{secret:secret||null}}); closeModal(); await loadSchema(); }
+    catch(e){ if($("cMsg")) $("cMsg").innerHTML=`<div class="banner bad">${esc(e.message)}</div>`; else alert(e.message); }
+  };
+  if(!needs) return go(null);
+  openModal(`<h1 style="font-size:16px;margin:0 0 4px">Connect ${esc(name)}</h1>
+    <div class="dim">${esc(src.kind)} · ${esc(sourceFacts(src).slice(1).map(([,v])=>v).join(" · "))}</div>
+    <form id="rcForm"><label>${src.kind==="ducklake"?"Quack token":"Password"}</label><input id="rcSecret" type="password" autofocus>
+    <div class="row" style="margin-top:14px"><button type="submit">Connect</button>
+      <button type="button" class="ghost" onclick="closeModal()">Cancel</button></div><div id="cMsg"></div></form>`);
+  $("rcForm").onsubmit=ev=>{ ev.preventDefault(); go($("rcSecret").value); };
+}
+// The ⋯ menu on a table row.
+function openTableMenu(e,fqn){
+  const t=findTable(fqn); if(!t) return;
+  const ddl=`CREATE TABLE ${fqn} (\n${t.columns.map(c=>`  ${c.name} ${c.type}`).join(",\n")}\n);`;
+  const items=[["Copy name",()=>navigator.clipboard.writeText(t.short)],
+    ["Copy fully qualified name",()=>navigator.clipboard.writeText(`${META.source.name}.${t.schema}.${t.short}`)],
+    ["Copy SQL definition",()=>navigator.clipboard.writeText(ddl)],
+    ["Query in current notebook",()=>queryTable(fqn)]];
+  openMenu(e,items);
 }
 function queryTable(fqn){
   addCell("sql"); const c=S.nb.cells[S.nb.cells.length-1];
@@ -1052,9 +1079,9 @@ async function submitConnect(){
 async function listSources(){
   try{
     const d=await api("/sources");
-    $("cList").innerHTML=`<div class="dim">Connected</div>`+(d.sources.length?d.sources.map(s=>
+    $("cList").innerHTML=`<div class="dim">Saved</div>`+(d.sources.length?d.sources.map(s=>
       `<div class="row" style="padding:6px 0;border-top:1px solid var(--line)">
-        <b>${esc(s.name)}</b><span class="chip">${esc(s.kind)}</span>
+        <b>${esc(s.name)}</b><span class="chip"><span class="dot${s.connected?" on":""}"></span>${esc(s.kind)}</span>
         <span class="spacer"></span>
         <button class="ghost sm" onclick="detach('${esc(s.name)}')">Remove</button></div>`).join("")
       : `<div class="dim">nothing yet</div>`);
@@ -1066,7 +1093,8 @@ async function detach(n){ await api("/sources/"+encodeURIComponent(n),{method:"D
 async function openAudit(){
   openModal(`<h1 style="font-size:16px;margin:0 0 10px">Audit</h1><div id="aList" class="dim">loading…</div>
     <div class="row" style="margin-top:12px"><button class="ghost" onclick="closeModal()">Close</button></div>`);
-  const d=await api("/audit?limit=40");
+  let d; try{ d=await api("/audit?limit=40"); }
+  catch(e){ $("aList").innerHTML=`<div class="banner bad">${esc(e.message)}</div>`; return; }
   $("aList").innerHTML=`<table><thead><tr><th>when</th><th>who</th><th>what</th><th>decision</th><th>query</th></tr></thead><tbody>`
     +d.rows.map(r=>`<tr><td>${esc((r.ts||"").slice(11,19))}</td><td>${esc(r.user)}</td>
       <td>${esc(r.mode)}</td>

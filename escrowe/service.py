@@ -157,7 +157,9 @@ class Escrowe:
         rows = self.store.sources()
         if not rows:
             return
-        self.source = Source.from_row(rows[0]["name"], rows[0]["kind"], rows[0]["params"])
+        active = self.store.setting("active_source")
+        row = next((r for r in rows if r["name"] == active), rows[0])
+        self.source = Source.from_row(row["name"], row["kind"], row["params"])
         if self.source.kind not in REGISTRY:
             return
         if REGISTRY[self.source.kind].requires_credentials and "password" not in self.source.params:
@@ -183,21 +185,51 @@ class Escrowe:
         self._history.clear()
 
     def set_source(self, src: Source, persist: bool = True) -> dict:
-        """Connect to a database, replacing whatever was connected before.
-        Fails before touching current state if the new one cannot connect."""
+        """Connect to a database, making it the active one. Earlier saved
+        sources stay known, so one can switch back. Fails before touching
+        current state if the new one cannot connect."""
         engine = self._connect(src)
         self._close_engine()
         self.engine, self.source = engine, src
         if persist:
             self.store.save_source(src.name, src.kind, src.persisted_json())
-        else:
-            self.store.clear_sources()
+            self.store.set_setting("active_source", src.name)
         return {"name": src.name, "kind": src.kind, "tables": [t.fqn for t in self._schemas[id(engine)]]}
 
-    def remove_source(self) -> None:
-        self._close_engine()
-        self.source = None
-        self.store.clear_sources()
+    def connect_saved(self, name: str, secret: str | None = None) -> dict:
+        """Make a saved source the active one. A password (or DuckLake token)
+        is never on disk, so it is supplied here when the kind needs one."""
+        row = self.store.source(name)
+        if row is None:
+            raise ValueError(f"No saved source named {name!r}.")
+        src = Source.from_row(row["name"], row["kind"], row["params"])
+        if secret:
+            src.params["token" if src.kind == "ducklake" else "password"] = secret
+        return self.set_source(src)
+
+    def remove_source(self, name: str | None = None) -> None:
+        """Forget a saved source; the active one when no name is given.
+        Forgetting the active one also disconnects it."""
+        name = name or (self.source.name if self.source else None)
+        if name is None:
+            return
+        if self.source is not None and self.source.name == name:
+            self._close_engine()
+            self.source = None
+            self.store.set_setting("active_source", "")
+        self.store.delete_source(name)
+
+    def saved_sources(self) -> list[dict]:
+        """Every saved source, redacted, the active one first."""
+        out = []
+        for r in self.store.sources():
+            src = Source.from_row(r["name"], r["kind"], r["params"])
+            active = self.source is not None and self.source.name == src.name
+            out.append({**src.redacted(), "active": active, "connected": active and self.engine is not None})
+        if self.source is not None and not any(s["active"] for s in out):   # connected but not saved
+            out.insert(0, {**self.source.redacted(), "active": True, "connected": self.engine is not None})
+        out.sort(key=lambda s: not s["active"])
+        return out
 
     # ------------------------------------------------------------ identity
 

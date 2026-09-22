@@ -76,3 +76,25 @@ def test_a_saved_source_reconnects_only_once_a_password_is_supplied(tmp_path):
     assert svc.source is not None and svc.engine is None       # known, not connected
     svc.login("bob", "bob")
     assert len(svc.sessions) == 1
+
+
+def test_several_sources_stay_saved_and_one_is_active(tmp_path):
+    from escrowe.config import Settings
+    from escrowe.service import Escrowe
+    from escrowe.store import Store
+
+    store = Store(tmp_path / "saved.sqlite")
+    svc = Escrowe(Settings(home=tmp_path, jwt_secret="t", llm_provider="mock"), store=store)
+    svc.set_source(Source("first", "fake", {"user": "alice", "password": "alice"}))
+    svc.set_source(Source("second", "fake", {"user": "bob", "password": "bob"}))
+    names = [s["name"] for s in svc.saved_sources()]
+    assert names == ["second", "first"]                       # active one first
+    assert svc.saved_sources()[0]["connected"] is True
+
+    svc.connect_saved("first", "alice")                        # password supplied again
+    assert svc.source.name == "first" and svc.engine is not None
+
+    svc.remove_source("second")
+    assert [s["name"] for s in svc.saved_sources()] == ["first"]
+    svc.remove_source()                                        # the active one
+    assert svc.source is None and svc.saved_sources() == []
