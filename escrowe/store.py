@@ -66,13 +66,19 @@ class Store:
             self.set_setting("jwt_secret", secret)
         return secret
 
-    # the configured source (at most one)
+    # saved sources - several may be known, one is active at a time
     def save_source(self, name: str, kind: str, params_json: str) -> None:
-        self._exec("DELETE FROM sources")
-        self._exec("INSERT INTO sources VALUES (?, ?, ?)", (name, kind, params_json))
+        self._exec("INSERT OR REPLACE INTO sources VALUES (?, ?, ?)", (name, kind, params_json))
+
+    def delete_source(self, name: str) -> None:
+        self._exec("DELETE FROM sources WHERE name = ?", (name,))
 
     def clear_sources(self) -> None:
         self._exec("DELETE FROM sources")
+
+    def source(self, name: str) -> sqlite3.Row | None:
+        rows = self._rows("SELECT * FROM sources WHERE name = ?", (name,))
+        return rows[0] if rows else None
 
     def sources(self) -> list[sqlite3.Row]:
         return self._rows("SELECT * FROM sources ORDER BY name")

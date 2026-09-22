@@ -176,8 +176,8 @@ class Connection:
     def set_source(self, name: str, kind: str, params: dict, persist: bool = True) -> dict:
         return self._request("POST", "/sources", json={"name": name, "kind": kind, "params": params}).json()
 
-    def remove_source(self) -> None:
-        self._request("DELETE", "/sources/current")
+    def remove_source(self, name: str | None = None) -> None:
+        self._request("DELETE", f"/sources/{name or 'current'}")
 
     def health(self) -> dict:
         return self._http.get("/health").json()
@@ -255,8 +255,8 @@ class LocalConnection:
         except (ValueError, EngineError) as e:
             raise EscroweError(str(e))
 
-    def remove_source(self) -> None:
-        self.svc.remove_source()
+    def remove_source(self, name: str | None = None) -> None:
+        self.svc.remove_source(name)
 
     def health(self) -> dict:
         return {"ok": True, "embedded": True, "agent": self.svc.agent.status()}

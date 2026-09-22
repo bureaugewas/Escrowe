@@ -44,6 +44,10 @@ class SourceBody(BaseModel):
     dsn: str | None = None      # alternative to kind+params
 
 
+class ConnectBody(BaseModel):
+    secret: str | None = None      # password, or a DuckLake token
+
+
 class NotebookBody(BaseModel):
     cells: list[dict]
     source: dict | None = None
@@ -148,7 +152,7 @@ def create_app(escrowe: Escrowe | None = None, local_operator: bool = False) -> 
 
     @app.get("/sources")
     def get_sources(p: Principal = Depends(principal)):
-        return {"sources": [svc.source.redacted()] if svc.source else []}
+        return {"sources": svc.saved_sources()}
 
     @app.post("/sources")
     def set_source(body: SourceBody, p: Principal = Depends(principal)):
@@ -162,9 +166,13 @@ def create_app(escrowe: Escrowe | None = None, local_operator: bool = False) -> 
             return svc.set_source(src)
         return run(do)
 
+    @app.post("/sources/{name}/connect")
+    def connect_source(name: str, body: ConnectBody, p: Principal = Depends(principal)):
+        return run(lambda: svc.connect_saved(name, body.secret))
+
     @app.delete("/sources/{name}")
     def delete_source(name: str, p: Principal = Depends(principal)):
-        svc.remove_source()
+        svc.remove_source(None if name == "current" else name)
         return {"ok": True}
 
     # --------------------------------------------------------- notebooks
