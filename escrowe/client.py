@@ -63,7 +63,9 @@ class Result:
                 "attempts": self.attempts, "provider": self.provider}
 
     def to_json(self) -> str:
-        return json.dumps(self.to_dict(), default=str)
+        """For people and scripts: each row as a {column: value} object."""
+        d = {k: v for k, v in self.to_dict().items() if k != "columns"}
+        return json.dumps({**d, "rows": self.records()}, default=str)
 
     def to_arrow(self):
         import pyarrow as pa
@@ -110,7 +112,10 @@ class Connection:
             self.login(user, password)
 
     def login(self, user: str, password: str) -> Connection:
-        r = self._http.post("/login", json={"user": user, "password": password})
+        try:
+            r = self._http.post("/login", json={"user": user, "password": password})
+        except httpx.HTTPError as e:
+            raise EscroweError(f"Cannot reach Escrowe at {self.url}: {e}")
         if r.status_code != 200:
             raise EscroweAuthError(_detail(r))
         d = r.json()
