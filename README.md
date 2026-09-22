@@ -8,10 +8,13 @@ that account's schema (table and column names, types, comments, never
 values), runs the SQL the agent writes as that account, and hands the rows
 to you. The rows do not go back to the agent.
 
-Escrowe adds no access control of its own. Whatever the connected account
-can do, the agent can do, and nothing more. The one thing Escrowe guarantees
-structurally is that query results never re-enter the agent's context unless
-a person explicitly feeds them back.
+Escrowe adds no access control of its own: it does not grant the agent
+anything the connected account cannot already do. What it does add is a
+non-transformation policy - by default the agent may only run a single
+`SELECT` (or `UNION`/`EXCEPT`/`INTERSECT`), never a write, a stored
+procedure, or a file/environment read disguised as one - and the structural
+guarantee that query results never re-enter the agent's context unless a
+person explicitly feeds them back.
 
 ## How a question is answered
 
