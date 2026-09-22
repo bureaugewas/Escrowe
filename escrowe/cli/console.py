@@ -8,7 +8,12 @@ from contextlib import nullcontext
 
 from rich.console import Console
 
-console = Console()
+# On a real terminal, color_system is forced to "standard" rather than left to
+# Rich's TERM-based probe: some terminals (notably certain integrated/
+# multiplexed ones) under-report their capability and color gets disabled.
+# Passing color_system also forces Rich to treat the stream as a terminal, so
+# this is only done when stdout truly is one - piped output must stay plain.
+console = Console(color_system="standard" if sys.stdout.isatty() else None)
 
 # Named ANSI colours rather than truecolor hex: every terminal that does
 # colour at all renders the 16 standard names exactly.

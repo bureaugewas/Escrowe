@@ -60,6 +60,8 @@ def interactive() -> None:
     console.print(f"{NAME} {__version__}   a blind-agent query gateway")
 
     claude_ok = wizard.ensure_claude(svc, interactive=wizard.is_tty(), quiet=True)
+    if svc.source is not None and wizard.is_tty() and not wizard.confirm_saved_connection(conn):
+        svc = conn.svc
     if svc.source is None:
         wizard.connect_database(conn)
     elif svc.engine is None and not wizard.login_saved_connection(conn):

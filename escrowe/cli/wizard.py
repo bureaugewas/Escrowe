@@ -116,14 +116,22 @@ def _choose_mysql_database(params: dict) -> str | None:
     return choice.strip() or None
 
 
+def confirm_saved_connection(conn: LocalConnection) -> bool:
+    """Ask before reusing the last connection, and forget it if declined."""
+    src = conn.svc.source
+    label = f"{src.name} ({src.kind}" + (f" as {src.user}" if src.user else "") + ")"
+    if typer.confirm(f"Connect to the last connection, {label}?", default=False):
+        return True
+    conn.remove_source()
+    return False
+
+
 def login_saved_connection(conn: LocalConnection) -> bool:
     """A source was connected in an earlier run and its password was not kept
     (by design): ask for it once now."""
-    stored_user = conn.svc.source.user
     for _ in range(3):
         try:
-            user = typer.prompt("Username", default=stored_user) if stored_user else typer.prompt("Username")
-            conn.login(user, typer.prompt("Password", hide_input=True))
+            conn.login(typer.prompt("Username"), typer.prompt("Password", hide_input=True))
             return True
         except EscroweAuthError as e:
             console.print(f"[red]{e}[/]")
@@ -141,9 +149,16 @@ def ensure_claude(svc, interactive: bool = True, force: bool = False, quiet: boo
     chosen = svc.store.setting(LLM_CHOSEN)
     st = llm_login.status(svc.store)
     if chosen and st["connected"] and not force:
-        if not quiet:
-            console.print(f"[dim]{llm_login.describe(st)}[/]")
-        return True
+        if not interactive:
+            if not quiet:
+                console.print(f"[dim]{llm_login.describe(st)}[/]")
+            return True
+        if typer.confirm(f"Keep using {llm_login.describe(st)}?", default=True):
+            return True
+        llm_login.forget_api_key(svc.store)
+        svc.store.set_setting(LLM_CHOSEN, "")
+        svc.reload_agent()
+        return _choose_llm(svc)
     if not interactive:
         console.print("[yellow]No LLM is connected, so questions will not work.[/] "
                       "Run [bold]escrowe claude login[/] on a terminal to connect one.")
