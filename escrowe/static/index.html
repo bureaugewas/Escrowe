@@ -1,0 +1,966 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Escrowe</title>
+<link rel="icon" href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 32 32'%3E%3Crect width='32' height='32' rx='7' fill='%234c9aff'/%3E%3Cpath d='M11 10h10M11 16h7M11 22h10' stroke='%23fff' stroke-width='2.6' stroke-linecap='round'/%3E%3C/svg%3E">
+<!-- Charting: Observable Plot (needs d3 as a global). If these fail to load (offline),
+     cells still run and show tables; only the chart view is unavailable. -->
+<script src="https://cdn.jsdelivr.net/npm/d3@7.9.0/dist/d3.min.js"></script>
+<script src="https://cdn.jsdelivr.net/npm/@observablehq/plot@0.6.16/dist/plot.umd.min.js"></script>
+<style>
+  :root{--bg:#0e1116;--panel:#161b22;--panel2:#11151b;--line:#262d36;--text:#d7dee8;--dim:#8b97a6;
+        --accent:#6cb6ff;--ok:#3fcf8e;--bad:#ff6b6b;--warn:#ffb347;--radius:10px;
+        /* chart series (validated categorical order, dark steps) */
+        --s1:#3987e5;--s2:#d95926;--s3:#199e70;--s4:#c98500;--s5:#d55181;--s6:#008300;--s7:#9085e9;--s8:#e66767;
+        --grid:#2c2c2a}
+  @media (prefers-color-scheme:light){:root:not([data-theme="dark"]){--bg:#f6f8fa;--panel:#fff;--panel2:#f0f3f6;
+        --line:#d8dee4;--text:#1f2933;--dim:#5c6b7a;--accent:#0b62d6;
+        --s1:#2a78d6;--s2:#eb6834;--s3:#1baf7a;--s4:#eda100;--s5:#e87ba4;--s6:#008300;--s7:#4a3aa7;--s8:#e34948;
+        --grid:#e1e0d9}}
+  *{box-sizing:border-box}
+  body{margin:0;background:var(--bg);color:var(--text);font:14px/1.5 -apple-system,"Segoe UI",Roboto,sans-serif}
+  button{background:var(--accent);color:#fff;border:0;padding:8px 14px;border-radius:8px;cursor:pointer;
+         font-weight:600;font-size:13px}
+  button.ghost{background:transparent;color:var(--text);border:1px solid var(--line)}
+  button.sm{padding:3px 9px;font-size:12px}
+  button.icon{background:transparent;color:var(--dim);border:0;padding:2px 6px;font-size:14px;line-height:1}
+  button.icon:hover{color:var(--text)}
+  button:disabled{opacity:.5;cursor:default}
+  input,select,textarea{width:100%;background:var(--panel2);color:var(--text);border:1px solid var(--line);
+         border-radius:8px;padding:9px 10px;font:inherit}
+  select{width:auto;padding:4px 8px;font-size:12px}
+  textarea{resize:vertical;min-height:74px}
+  textarea.code{font:12.5px/1.45 ui-monospace,SFMono-Regular,Menlo,monospace}
+  label{display:block;margin:10px 0 4px;color:var(--dim);font-size:12px}
+  .panel{background:var(--panel);border:1px solid var(--line);border-radius:var(--radius);padding:16px}
+  .row{display:flex;gap:8px;flex-wrap:wrap;align-items:center}
+  .grid2{display:grid;grid-template-columns:1fr 1fr;gap:0 12px}
+  .dim{color:var(--dim);font-size:12px}
+  .hide{display:none!important}
+  /* login */
+  #gate{min-height:100vh;display:flex;align-items:center;justify-content:center;padding:24px}
+  #gate .panel{width:380px}
+  h1{font-size:20px;margin:0 0 2px}
+  /* app shell */
+  header{display:flex;gap:8px;align-items:center;padding:8px 16px;background:var(--panel);
+         border-bottom:1px solid var(--line);position:sticky;top:0;z-index:5;flex-wrap:wrap}
+  header b{font-size:15px}
+  header .sep{width:1px;height:22px;background:var(--line);margin:0 4px}
+  #nbName{width:200px;padding:5px 9px;font-weight:600}
+  .chip{background:var(--panel2);border:1px solid var(--line);border-radius:20px;padding:3px 11px;font-size:12px}
+  .dot{display:inline-block;width:7px;height:7px;border-radius:50%;background:var(--dim);margin-right:6px;vertical-align:middle}
+  .dot.on{background:var(--ok)}
+  .ymulti{grid-column:1/-1}
+  .chips{display:flex;flex-wrap:wrap;gap:6px;margin-top:4px}
+  .chip-check{display:flex;align-items:center;gap:5px;background:var(--panel2);border:1px solid var(--line);
+             border-radius:20px;padding:3px 11px 3px 8px;font-size:12px;cursor:pointer;user-select:none}
+  .chip-check input{width:auto;margin:0}
+  .spacer{flex:1}
+  main{display:flex;padding:14px 16px;align-items:flex-start}
+  .sidebarcol{display:flex;flex-direction:column;gap:14px;flex:0 0 270px;width:270px;min-width:180px;max-width:560px;overflow:hidden}
+  .sidebarcol.hide{display:none}
+  .resizer{flex:0 0 14px;width:14px;align-self:stretch;cursor:col-resize;position:relative}
+  .resizer::after{content:"";position:absolute;top:0;bottom:0;left:6px;width:2px;border-radius:2px;background:transparent}
+  .resizer:hover::after,.resizer.dragging::after{background:var(--line)}
+  main>section{margin-left:0;min-width:0;flex:1}
+  .nbrow2{display:flex;align-items:center;gap:6px;padding:5px 6px;border-radius:8px;cursor:pointer;font-size:12.5px}
+  .nbrow2:hover{background:var(--panel2)}
+  .nbrow2.on{background:var(--panel2);color:var(--accent);font-weight:600}
+  .nbrow2 .n{overflow:hidden;text-overflow:ellipsis;white-space:nowrap;flex:1}
+  @media (max-width:860px){main{flex-direction:column}.resizer{display:none}.sidebarcol{width:auto!important;flex-basis:auto!important}}
+  #sidebar{position:sticky;top:60px;max-height:calc(100vh - 80px);overflow:auto}
+  /* Schema tree: schema -> table -> columns, Snowflake-style - compact rows, indent by level. */
+  .schemaGrp{border-bottom:1px solid var(--line)}
+  .schemaGrp:last-child{border-bottom:none}
+  .schemaGrp>summary,.tblRow>summary{cursor:pointer;list-style:none;display:flex;align-items:center;gap:6px;
+    padding:5px 4px;border-radius:6px}
+  .schemaGrp>summary::-webkit-details-marker,.tblRow>summary::-webkit-details-marker{display:none}
+  .schemaGrp>summary:hover,.tblRow>summary:hover{background:var(--panel2)}
+  .schemaGrp>summary{font-weight:700;text-transform:uppercase;font-size:10.5px;letter-spacing:.04em;color:var(--dim)}
+  .tblRow>summary{font-weight:600;font-size:12.5px}
+  .chev{color:var(--dim);font-size:9px;width:9px;display:inline-block;transition:transform .15s;flex:none}
+  details[open]>summary>.chev{transform:rotate(90deg)}
+  .schemaBody{padding:0 0 2px 6px}
+  .tblRow{margin:0}
+  .cnt{margin-left:auto;font-size:10px;color:var(--dim);font-weight:400}
+  .tblBody{padding:0 0 4px 21px}
+  .tcmt{padding:2px 4px 5px;font-size:11.5px}
+  .col{display:flex;gap:6px;padding:2px 4px;font-size:11.5px;color:var(--dim);border-radius:4px}
+  .col:hover{background:var(--panel2)}
+  .col .t{margin-left:auto;font-size:9.5px;opacity:.7;flex:none}
+  table{border-collapse:collapse;width:100%;margin-top:10px;font-size:12.5px;display:block;overflow:auto;max-height:52vh}
+  th,td{border:1px solid var(--line);padding:5px 9px;text-align:left;white-space:nowrap}
+  td.num{text-align:right;font-variant-numeric:tabular-nums}
+  th{background:var(--panel2);color:var(--dim);position:sticky;top:0}
+  pre{background:var(--panel2);border:1px solid var(--line);border-radius:8px;padding:10px;
+      overflow:auto;font-size:12px;white-space:pre-wrap;margin:8px 0 0}
+  .banner{border-radius:8px;padding:9px 12px;margin-top:10px;font-size:13px}
+  .banner.bad{background:rgba(255,107,107,.12);color:var(--bad)}
+  .banner.ok{background:rgba(63,207,142,.12);color:var(--ok)}
+  .banner.warn{background:rgba(255,179,71,.12);color:var(--warn)}
+  .tabs{display:flex;gap:4px;margin-bottom:10px;flex-wrap:wrap}
+  .tabs button{background:transparent;color:var(--dim);border:1px solid transparent;padding:6px 12px}
+  .tabs button.on{background:var(--panel2);color:var(--text);border-color:var(--line)}
+  #overlay{position:fixed;inset:0;background:rgba(0,0,0,.55);display:flex;align-items:flex-start;
+           justify-content:center;padding:40px 16px;z-index:10;overflow:auto}
+  #overlay .panel{width:560px;max-width:100%}
+  .spin:after{content:"";display:inline-block;width:11px;height:11px;border:2px solid var(--dim);
+              border-top-color:transparent;border-radius:50%;animation:s .7s linear infinite;vertical-align:-1px}
+  @keyframes s{to{transform:rotate(360deg)}}
+  /* notebook */
+  #cells{display:flex;flex-direction:column;gap:12px}
+  .cell{background:var(--panel);border:1px solid var(--line);border-radius:var(--radius);padding:12px 14px}
+  .cell.running{border-color:var(--accent)}
+  .cell .head{display:flex;gap:8px;align-items:center;margin-bottom:8px}
+  .cell .kind{font-size:11px;font-weight:700;letter-spacing:.04em;text-transform:uppercase;color:var(--dim);
+              border:1px solid var(--line);border-radius:6px;padding:2px 7px;background:var(--panel2)}
+  .cell .kind.ask{color:var(--accent);border-color:var(--accent)}
+  .cell .title{flex:1;background:transparent;border:1px solid transparent;padding:4px 6px;font-weight:600;font-size:14px}
+  .cell .title:hover,.cell .title:focus{border-color:var(--line);background:var(--panel2)}
+  .cell .tools{display:flex;gap:2px;align-items:center}
+  .cell .out{margin-top:8px}
+  .cell .meta{display:flex;gap:8px;align-items:center;margin-top:8px;flex-wrap:wrap}
+  .cell .viewsw button{padding:3px 10px}
+  .chart{margin-top:8px;overflow:hidden}
+  .chart svg{max-width:100%;height:auto;font:11px -apple-system,"Segoe UI",Roboto,sans-serif}
+  .chart figure{margin:0}
+  .chart [aria-label="tip"] text{fill:var(--text)}
+  .chart [aria-label="tip"] path{fill:var(--panel);stroke:var(--line)}
+  .stats{display:flex;gap:10px;flex-wrap:wrap;margin-top:8px}
+  .stat{flex:1;min-width:140px;background:var(--panel2);border:1px solid var(--line);border-radius:8px;padding:12px 14px}
+  .stat .v{font-size:30px;font-weight:600;line-height:1.15;letter-spacing:-.01em}
+  .stat .l{color:var(--dim);font-size:12px;margin-top:2px}
+  .cfg{display:grid;grid-template-columns:repeat(auto-fill,minmax(150px,1fr));gap:8px 12px;margin-top:8px;padding:10px;
+       background:var(--panel2);border:1px solid var(--line);border-radius:8px}
+  .cfg label{margin:0 0 3px}
+  .cfg select{width:100%}
+  .prose{line-height:1.6}
+  .prose h1{font-size:22px;margin:4px 0 6px}.prose h2{font-size:18px;margin:4px 0 6px}.prose h3{font-size:15px;margin:4px 0 4px}
+  .prose p{margin:4px 0 8px}.prose ul{margin:4px 0 8px;padding-left:22px}.prose code{background:var(--panel2);padding:1px 5px;border-radius:4px;font-size:12.5px}
+  .prose a{color:var(--accent)}
+  .addbar{display:flex;gap:8px;justify-content:center;padding:14px 0 30px;flex-wrap:wrap}
+  .empty{text-align:center;color:var(--dim);padding:40px 20px}
+  .nbrow{display:flex;gap:8px;align-items:center;padding:8px 0;border-top:1px solid var(--line)}
+  /* present mode: titles + visuals only */
+  body.present header .edit-only,body.present #sidebar,body.present .addbar,body.present .cell .editor,
+  body.present .cell .tools,body.present .cell .meta,body.present .cell .cfg,body.present .cell .kind,
+  body.present .cell .sqlnote{display:none!important}
+  body.present main{grid-template-columns:1fr;padding:18px 22px}
+  body.present #cells{display:grid;grid-template-columns:repeat(auto-fill,minmax(380px,1fr));gap:16px;align-items:start}
+  body.present .cell.wide{grid-column:1/-1}
+  body.present .cell .title{pointer-events:none;border-color:transparent!important;background:transparent!important;
+                            font-size:15px;padding-left:0}
+  body.present .cell .head{margin-bottom:2px}
+  body.present .cell table{max-height:340px}
+  body.present .stat .v{font-size:38px}
+</style>
+</head>
+<body>
+
+<!-- ------------------------------------------------------------ login -->
+<div id="gate">
+  <div class="panel">
+    <h1>Escrowe</h1>
+    <div class="dim">A blind-agent query gateway. Log in with your database account.</div>
+    <form id="loginForm">
+      <label>User</label><input id="lu" autocomplete="username" autofocus>
+      <label>Password</label><input id="lp" type="password" autocomplete="current-password">
+      <div class="row" style="margin-top:14px"><button id="loginBtn" style="flex:1">Log in</button></div>
+    </form>
+    <div id="loginMsg"></div>
+    <div class="dim" id="gateInfo" style="margin-top:12px"></div>
+  </div>
+</div>
+
+<!-- -------------------------------------------------------------- app -->
+<div id="app" class="hide">
+  <header>
+    <b>Escrowe</b>
+    <span class="chip edit-only" id="whoami"></span>
+    <span class="sep edit-only"></span>
+    <input id="nbName" placeholder="untitled notebook" title="Notebook name">
+    <span class="dim edit-only" id="saveMsg"></span>
+    <span class="spacer"></span>
+    <span class="dim edit-only" id="idle"></span>
+    <button class="ghost sm" id="runAllBtn">Run all</button>
+    <button class="sm" id="presentBtn">Present</button>
+    <span class="sep edit-only"></span>
+    <button class="ghost sm edit-only" id="sbBtn" title="Show or hide the schema">Schema</button>
+    <button class="ghost sm edit-only" id="auditBtn">Audit</button>
+    <button class="ghost sm edit-only" id="outBtn">Log out</button>
+  </header>
+
+  <main>
+    <div class="sidebarcol" id="sidebarcol">
+      <section class="panel" id="dbPanel">
+        <div class="row"><b style="font-size:13px">Database</b></div>
+        <div class="chip edit-only" id="dbStatus" title="" style="margin-top:6px;cursor:pointer;display:inline-flex">
+          <span class="dot" id="dbDot"></span><span id="dbLabel">not connected</span></div>
+      </section>
+      <section class="panel" id="nbPanel">
+        <div class="row"><b style="font-size:13px">Notebooks</b>
+          <span class="spacer"></span><button class="ghost sm" id="nbNewBtn" title="Start a new notebook">+ New</button></div>
+        <div id="nbSidebarList" class="dim" style="margin-top:6px">loading…</div>
+      </section>
+      <section class="panel" id="sidebar">
+        <div class="row"><b style="font-size:13px">What the agent sees</b>
+          <span class="spacer"></span><button class="ghost sm" id="refreshMeta">↻</button></div>
+        <div class="dim" style="margin:4px 0 8px">Names, types and comments - never a value.</div>
+        <div id="schema"></div>
+      </section>
+    </div>
+    <div class="resizer" id="sbResizer" title="Drag to resize"></div>
+
+    <section>
+      <div id="cells"></div>
+      <div class="addbar">
+        <button class="ghost" onclick="addCell('sql')">+ SQL</button>
+        <button class="ghost" onclick="addCell('ask')">+ Question</button>
+        <button class="ghost" onclick="addCell('md')">+ Text</button>
+      </div>
+    </section>
+  </main>
+</div>
+
+<!-- ---------------------------------------------------------- modals -->
+<div id="overlay" class="hide"><div class="panel" id="modal"></div></div>
+
+<script>
+const $=id=>document.getElementById(id), esc=s=>String(s??"").replace(/[&<>"]/g,c=>({"&":"&amp;","<":"&lt;",">":"&gt;",'"':"&quot;"}[c]));
+let S={token:null,user:null,idleAt:0,present:false,nb:{name:"",cells:[],source:null},results:{}};
+const IDLE_MS=30*60*1000, DRAFT_KEY="escrowe.notebook.draft";
+const uid=()=>Math.random().toString(36).slice(2,10);
+const HAS_PLOT=typeof Plot!=="undefined"&&typeof d3!=="undefined";
+const DEFAULT_VIEW="table";   // a fresh result shows its table first; Chart is one click away
+
+async function api(path,{method="GET",body,auth=true}={}){
+  const h={"Content-Type":"application/json"};
+  if(auth&&S.token) h.Authorization="Bearer "+S.token;
+  const r=await fetch(path,{method,headers:h,body:body?JSON.stringify(body):undefined});
+  const d=await r.json().catch(()=>({}));
+  if(!r.ok) throw Object.assign(new Error(d.detail||r.statusText),{status:r.status});
+  return d;
+}
+const touch=()=>{S.idleAt=Date.now()+IDLE_MS};
+
+/* ------------------------------------------------------------- login */
+$("loginForm").onsubmit=async e=>{
+  e.preventDefault(); const b=$("loginBtn"); b.disabled=true; $("loginMsg").innerHTML="";
+  try{
+    const d=await api("/login",{method:"POST",auth:false,
+      body:{user:$("lu").value.trim(),password:$("lp").value}});
+    S={...S,token:d.token,user:d.sub};
+    $("lp").value=""; start();
+  }catch(err){ $("loginMsg").innerHTML=`<div class="banner bad">${esc(err.message)}</div>`; }
+  b.disabled=false;
+};
+
+async function gateInfo(){
+  try{ const h=await api("/health",{auth:false});
+    $("gateInfo").innerHTML=`database: <b>${esc(h.source?.name||"none yet")}</b>`
+      +(h.source?` (${esc(h.source.kind)})`:"")+` · agent: ${esc(h.agent?.provider)}`;
+  }catch{}
+}
+
+// `escrowe -ui` serves loopback-only and runs token-less requests as the operator
+// (the account escrowe connected with), like the CLI. So: no login step unless
+// the server says one is needed - then the gate appears, as before.
+async function boot(){
+  try{ const d=await api("/me",{auth:false}); S={...S,token:null,user:d.user,operator:!!d.operator}; start(); }
+  catch{ gateInfo(); $("lu").focus(); }
+}
+
+/* --------------------------------------------------------------- app */
+async function start(){
+  $("gate").classList.add("hide"); $("app").classList.remove("hide"); touch();
+  $("whoami").textContent=S.user+(S.operator?" · operator":"");
+  $("outBtn").classList.toggle("hide",!S.token);      // nothing to log out of in operator mode
+  if(!S.nb.cells.length) loadDraft();
+  if(!S.nb.cells.length) addCell("ask",false);
+  for(const c of S.nb.cells) if(c.result&&!S.results[c.id]) S.results[c.id]=analyze(c.result);
+  renderAll();
+  loadNbSidebar();
+  await loadSchema();
+  const h=await api("/health",{auth:false});
+  paintDbStatus(h);
+  if(!h.source) openConnect();
+}
+function paintDbStatus(h){
+  const dot=$("dbDot"), label=$("dbLabel"), chip=$("dbStatus");
+  if(!h?.source){ dot.classList.remove("on"); label.textContent="not connected"; chip.title=""; return; }
+  dot.classList.toggle("on",!!h.connected);
+  const p=h.source.params||{}, kind=h.source.kind;
+  let bits=[];
+  if(kind==="mysql"||kind==="postgres"||kind==="sqlserver") bits=[p.host&&p.port?`${p.host}:${p.port}`:p.host,p.user,p.database];
+  else if(kind==="ducklake") bits=[String(p.metadata||"").replace(/^quack:/,""),p.data_path];
+  else if(kind==="duckdb"||kind==="sqlite") bits=[p.path];
+  label.textContent=`${kind}${bits.filter(Boolean).length?" · "+bits.filter(Boolean).join(" · "):""}`;
+  chip.title=`${h.source.name} - ${h.connected?"connected":"configured, not yet connected"}`;
+}
+
+async function loadSchema(){
+  try{
+    const d=await api("/metadata");
+    if(!d.tables.length){ $("schema").innerHTML=`<div class="dim">Nothing to see yet - connect a database.</div>`; return; }
+    // Group by schema (the part of "schema.table" before the dot; a table with no
+    // dot is in the implicit "main" schema) - a Snowflake-style object tree instead
+    // of one flat list, since a real warehouse's tables live in several schemas.
+    const groups=new Map();
+    for(const t of d.tables){
+      const dot=t.table.indexOf(".");
+      const schema=dot===-1?"main":t.table.slice(0,dot), short=dot===-1?t.table:t.table.slice(dot+1);
+      if(!groups.has(schema)) groups.set(schema,[]);
+      groups.get(schema).push({...t,short});
+    }
+    const schemas=[...groups.keys()].sort();
+    $("schema").innerHTML=schemas.map(s=>{
+      const tables=groups.get(s);
+      return `<details class="schemaGrp"${schemas.length===1?" open":""}>
+        <summary><span class="chev">▸</span><span>${esc(s)}</span><span class="cnt">${tables.length}</span></summary>
+        <div class="schemaBody">
+          ${tables.map(t=>`
+            <details class="tblRow">
+              <summary><span class="chev">▸</span><span>${esc(t.short)}</span>
+                <span class="cnt">${t.approx_rows??"?"}</span></summary>
+              <div class="tblBody">
+                ${t.comment?`<div class="dim tcmt">${esc(t.comment)}</div>`:""}
+                ${t.columns.map(c=>`<div class="col"><span>${esc(c.name)}</span>
+                  ${c.comment?`<span title="${esc(c.comment)}">ⓘ</span>`:""}
+                  <span class="t">${esc(c.type)}</span></div>`).join("")}
+              </div>
+            </details>`).join("")}
+        </div>
+      </details>`;
+    }).join("");
+  }catch(e){ $("schema").innerHTML=`<div class="banner bad">${esc(e.message)}</div>`; }
+}
+$("refreshMeta").onclick=loadSchema;
+$("sbBtn").onclick=()=>{ $("sidebar").classList.toggle("hide"); rerenderCharts(); };
+
+/* ------------------------------------------------------------ cells */
+const KIND_LABEL={sql:"SQL",ask:"Question",md:"Text"};
+const PLACEHOLDER={sql:"SELECT region, count(*) AS orders FROM orders GROUP BY 1",
+                   ask:"e.g. revenue per product category this year",
+                   md:"Narration in markdown: # heading, **bold**, - lists"};
+
+function addCell(kind,focus=true,after=null){
+  const c={id:uid(),kind,title:"",text:"",chart:{type:"auto"}};   // no view yet - renderOut picks one dynamically
+  const i=after?S.nb.cells.findIndex(x=>x.id===after)+1:S.nb.cells.length;
+  S.nb.cells.splice(i,0,c); renderAll(); saveDraft();
+  if(focus) document.querySelector(`[data-id="${c.id}"] textarea`)?.focus();
+}
+function cell(id){ return S.nb.cells.find(c=>c.id===id); }
+function removeCell(id){ S.nb.cells=S.nb.cells.filter(c=>c.id!==id); delete S.results[id]; renderAll(); saveDraft(); }
+function moveCell(id,dir){
+  const i=S.nb.cells.findIndex(c=>c.id===id), j=i+dir; if(j<0||j>=S.nb.cells.length) return;
+  [S.nb.cells[i],S.nb.cells[j]]=[S.nb.cells[j],S.nb.cells[i]]; renderAll(); saveDraft();
+}
+function setKind(id,kind){ const c=cell(id); c.kind=kind; delete S.results[id]; renderCell(id); saveDraft(); }
+
+function renderAll(){
+  const host=$("cells"); host.innerHTML="";
+  if(!S.nb.cells.length){ host.innerHTML=`<div class="empty">Add a cell below to get started.</div>`; return; }
+  for(const c of S.nb.cells){ const el=document.createElement("div"); el.className="cell"; el.dataset.id=c.id; host.appendChild(el); renderCell(c.id); }
+}
+
+function renderCell(id){
+  const c=cell(id), el=document.querySelector(`[data-id="${id}"]`); if(!c||!el) return;
+  const r=S.results[id];
+  el.className="cell"+(r&&r.wide?" wide":"");
+  el.innerHTML=`
+    <div class="head">
+      <select class="kind ${c.kind}" onchange="setKind('${id}',this.value)" title="Cell type">
+        ${Object.entries(KIND_LABEL).map(([k,v])=>`<option value="${k}"${k===c.kind?" selected":""}>${v}</option>`).join("")}
+      </select>
+      <input class="title" placeholder="${c.kind==="md"?"Section":"Title"}" value="${esc(c.title)}"
+             oninput="cell('${id}').title=this.value;saveDraft()">
+      <div class="tools">
+        ${c.kind!=="md"?`<button class="sm" onclick="runCell('${id}')" title="Run (⌘/Ctrl+Enter)">Run</button>`:""}
+        <button class="icon" onclick="moveCell('${id}',-1)" title="Move up">↑</button>
+        <button class="icon" onclick="moveCell('${id}',1)" title="Move down">↓</button>
+        <button class="icon" onclick="addCell('${c.kind}',true,'${id}')" title="Add a cell below">+</button>
+        <button class="icon" onclick="removeCell('${id}')" title="Delete cell">✕</button>
+      </div>
+    </div>
+    <div class="editor">
+      <textarea class="${c.kind==="sql"?"code":""}" placeholder="${esc(PLACEHOLDER[c.kind])}"
+        oninput="onEdit('${id}',this)" onkeydown="if((event.metaKey||event.ctrlKey)&&event.key==='Enter'){event.preventDefault();runCell('${id}')}"></textarea>
+    </div>
+    <div class="out"></div>`;
+  const ta=el.querySelector("textarea"); ta.value=c.text; autosize(ta);
+  renderOut(id);
+}
+function autosize(ta){ ta.style.height="auto"; ta.style.height=Math.min(Math.max(ta.scrollHeight+2,74),420)+"px"; }
+function onEdit(id,ta){ const c=cell(id); c.text=ta.value; autosize(ta); if(c.kind==="md") renderOut(id); saveDraft(); }
+
+/* ---------------------------------------------------------- running */
+async function runCell(id){
+  const c=cell(id), el=document.querySelector(`[data-id="${id}"]`); if(!c||c.kind==="md") return;
+  const text=c.text.trim(); if(!text) return;
+  touch(); el.classList.add("running");
+  el.querySelector(".out").innerHTML=`<div class="dim">${c.kind==="ask"?"the agent is writing a query":"running"} <span class="spin"></span></div>`;
+  try{
+    const r=await api(c.kind==="ask"?"/ask":"/sql",{method:"POST",body:c.kind==="ask"?{question:text}:{sql:text}});
+    S.results[id]=analyze(r); c.result=r;      // cached and saved, so reopening needs no query/agent call
+  }catch(err){
+    const kind=err.status===403?"Not allowed":err.status===401?"Session ended":"Error";
+    S.results[id]={error:`<b>${kind}.</b> ${esc(err.message)}`};
+    if(err.status===401) setTimeout(logout,1200);
+  }
+  el.classList.remove("running"); renderOut(id); saveDraft();
+}
+async function runAll(){
+  $("runAllBtn").disabled=true;
+  for(const c of S.nb.cells) if(c.kind!=="md"&&c.text.trim()) await runCell(c.id);
+  $("runAllBtn").disabled=false;
+}
+$("runAllBtn").onclick=runAll;
+
+/* ---------------------------------------------------- shape analysis */
+const DATE_RE=/^\d{4}-\d{2}-\d{2}([T ]\d{2}:\d{2}(:\d{2}(\.\d+)?)?)?(Z|[+-]\d{2}:?\d{2})?$/;
+const NUM_RE=/^-?\d+(\.\d+)?([eE][+-]?\d+)?$/, ID_RE=/^(id|.*_id|.*id)$/i;
+function classify(vals){
+  const v=vals.filter(x=>x!==null&&x!==undefined&&x!=="");
+  if(!v.length) return "empty";
+  if(v.every(x=>typeof x==="number")) return "number";
+  if(v.every(x=>typeof x==="boolean")) return "bool";
+  if(v.every(x=>typeof x==="string"&&NUM_RE.test(x))) return "numstr";
+  if(v.every(x=>typeof x==="string"&&DATE_RE.test(x))||v.every(x=>x instanceof Date)) return "date";
+  return "text";
+}
+// Turn a /sql or /ask response into: typed columns, row objects, and a chart suggestion.
+function analyze(r){
+  if(r.answer!=null&&!r.sql) return {answer:r.answer,audit_id:r.audit_id,attempts:r.attempts};
+  const cols=r.columns.map((name,i)=>{
+    const raw=r.rows.slice(0,1000).map(row=>row[i]); let type=classify(raw);
+    if(type==="numstr") type="number";
+    if(type==="number"&&ID_RE.test(name)) type="id";      // an identifier is not a measure
+    const distinct=new Set(raw.map(String)).size;
+    return {name,type,distinct};
+  });
+  const data=r.rows.map(row=>{ const o={}; cols.forEach((c,i)=>{ let v=row[i];
+    if(v!=null&&c.type==="number"&&typeof v!=="number") v=Number(v);
+    if(v!=null&&c.type==="date"&&!(v instanceof Date)) v=new Date(String(v).replace(" ","T"));
+    o[c.name]=v; }); return o; });
+  const res={sql:r.sql,columns:cols,rows:r.rows,data,row_count:r.row_count,duration_ms:r.duration_ms,
+             audit_id:r.audit_id,attempts:r.attempts,note:r.note};
+  res.suggest=suggest(res); res.wide=res.suggest.type==="table"&&cols.length>4;
+  return res;
+}
+function suggest(res){
+  const cols=res.columns, n=res.data.length, by=t=>cols.filter(c=>c.type===t);
+  const nums=by("number"), dates=by("date"), texts=[...by("text"),...by("bool")].sort((a,b)=>a.distinct-b.distinct);
+  if(n===0) return {type:"table"};
+  if(n===1&&nums.length&&nums.length===cols.length) return {type:"stat"};
+  if(n===1&&nums.length&&cols.length<=4) return {type:"stat"};
+  if(dates.length&&nums.length){
+    const cat=texts.find(t=>t.distinct>1&&t.distinct<=8);
+    // One date + several numbers, nothing to split by category: plot every number as its
+    // own line (color = which column, not a data value) rather than picking just the first.
+    if(!cat&&nums.length>1) return {type:"line",x:dates[0].name,y:nums.slice(0,8).map(k=>k.name)};
+    const s={type:"line",x:dates[0].name,y:nums[0].name};
+    if(cat) s.color=cat.name; return s;
+  }
+  if(texts.length&&nums.length){
+    const cat=texts.find(t=>t.distinct<=40)||null;
+    if(cat){ const s={type:"bar",x:cat.name,y:nums[0].name};
+      const c2=texts.find(t=>t!==cat&&t.distinct>1&&t.distinct<=8); if(c2) s.color=c2.name; return s; }
+  }
+  if(nums.length>=2&&!texts.length&&!dates.length){
+    const s={type:"scatter",x:nums[0].name,y:nums[1].name}; if(nums[2]) s.size=nums[2].name; return s;
+  }
+  if(nums.length>=2){ const s={type:"scatter",x:nums[0].name,y:nums[1].name};
+    const cat=texts.find(t=>t.distinct>1&&t.distinct<=8); if(cat) s.color=cat.name; return s; }
+  // Nothing here suggests a specific chart, but the manual override panel
+  // still needs somewhere to start from instead of blank X/Y selects the
+  // moment someone switches away from the table view.
+  const x=(dates[0]||texts[0]||cols[0])?.name;
+  const y=(nums[0]||cols.find(c=>c.name!==x))?.name;
+  return {type:"table", x, y};
+}
+// The effective chart spec: manual overrides win over the suggestion, field by field.
+function spec(c,res){
+  const cfg=c.chart||{}, s=res.suggest||{type:"table"};
+  const type=cfg.type&&cfg.type!=="auto"?cfg.type:s.type;
+  const pick=k=>cfg[k]!==undefined?(cfg[k]||null):(cfg.type&&cfg.type!=="auto"?null:s[k]||null);
+  let x=pick("x"),y=pick("y");
+  if(type!=="stat"&&type!=="table"&&(!x||!y)){    // a manual type with no axes: fill sensibly
+    const nums=res.columns.filter(k=>k.type==="number"), other=res.columns.filter(k=>k.type!=="number");
+    const dates=res.columns.filter(k=>k.type==="date");
+    // bar/line/area read as time series when there's a date column at all - put it on x
+    // by default rather than whichever non-number column happens to come first.
+    x=x||(type==="scatter"?nums[0]?.name:(dates[0]||other[0]||res.columns[0])?.name);
+    y=y||(nums.find(k=>k.name!==x)||res.columns.find(k=>k.name!==x))?.name;
+  }
+  return {type,x,y,color:pick("color"),size:pick("size")};
+}
+
+/* --------------------------------------------------------- rendering */
+function renderOut(id){
+  const c=cell(id), el=document.querySelector(`[data-id="${id}"]`), out=el.querySelector(".out"); if(!c) return;
+  const r=S.results[id];
+  el.classList.toggle("wide",!!(r&&r.wide));
+  if(c.kind==="md"){ out.innerHTML=`<div class="prose">${markdown(c.text)}</div>`; return; }
+  if(!r){ out.innerHTML=S.present?`<div class="dim">not run yet</div>`:""; return; }
+  if(r.error){ out.innerHTML=`<div class="banner bad">${r.error}</div>`; return; }
+  if(r.answer!==undefined){
+    out.innerHTML=`<div class="dim sqlnote">from the schema</div><pre>${esc(r.answer)}</pre>`; return;
+  }
+  const sp=spec(c,r), canChart=HAS_PLOT||sp.type==="stat"||sp.type==="table";
+  // No explicit choice yet: a table is the honest default (a chart is a claim about
+  // what the data means), except a single aggregate number, where the stat tile
+  // *is* the natural, only-good representation - not really a chart/table choice.
+  const view=c.chart?.view||(sp.type==="stat"?"chart":DEFAULT_VIEW);
+  const showChart=view==="chart"&&sp.type!=="table"&&canChart;
+  const notes=[]; if(r.attempts>1) notes.push(`${r.attempts} attempts`);
+  out.innerHTML=
+    (c.kind==="ask"?`<details class="sqlnote"><summary class="dim" style="cursor:pointer">the agent wrote</summary><pre>${esc(r.sql)}</pre></details>`:"")
+    + (r.note?`<div class="banner warn">${esc(r.note)}</div>`:"")
+    + `<div class="body"></div>`
+    + `<div class="meta">
+        <span class="viewsw tabs" style="margin:0">
+          <button class="${showChart?"on":""}" onclick="setView('${id}','chart')"${sp.type==="table"||!canChart?" disabled":""}>Chart</button>
+          <button class="${!showChart?"on":""}" onclick="setView('${id}','table')">Table</button>
+        </span>
+        <button class="ghost sm" onclick="toggleCfg('${id}')">⚙ chart</button>
+        <span class="dim">${r.row_count} row(s) · ${r.duration_ms} ms${notes.length?" · "+esc(notes.join(" · ")):""}
+          ${!HAS_PLOT?" · charts unavailable offline":""}</span>
+        <span class="spacer"></span>
+        <button class="ghost sm" onclick="downloadCsv('${id}')">CSV</button>
+       </div>
+       <div class="cfg hide"></div>`;
+  const body=out.querySelector(".body");
+  if(showChart) drawChart(body,r,sp,c); else body.appendChild(tableEl(r));
+  if(c._cfgOpen) toggleCfg(id,true);
+}
+function setView(id,v){ const c=cell(id); c.chart={...(c.chart||{}),view:v}; renderOut(id); saveDraft(); }
+function tableEl(r){
+  const t=document.createElement("table");
+  t.innerHTML=`<thead><tr>${r.columns.map(c=>`<th>${esc(c.name)}</th>`).join("")}</tr></thead><tbody>`
+    + r.rows.slice(0,500).map(row=>`<tr>${row.map((v,i)=>`<td class="${r.columns[i].type==="number"?"num":""}">${esc(v)}</td>`).join("")}</tr>`).join("")
+    + `</tbody>`;
+  return t;
+}
+function downloadCsv(id){
+  const r=S.results[id], q=v=>`"${String(v??"").replace(/"/g,'""')}"`;
+  const blob=new Blob([[r.columns.map(c=>q(c.name)).join(","),...r.rows.map(x=>x.map(q).join(","))].join("\n")],{type:"text/csv"});
+  const a=document.createElement("a"); a.href=URL.createObjectURL(blob); a.download=(cell(id).title||"escrowe")+".csv"; a.click();
+}
+
+// Manual override panel: chart type and which column feeds x / y / color / size.
+function toggleCfg(id,force){
+  const c=cell(id), r=S.results[id], el=document.querySelector(`[data-id="${id}"] .cfg`); if(!r||!el) return;
+  const open=force===true?true:el.classList.contains("hide"); c._cfgOpen=open;
+  el.classList.toggle("hide",!open); if(!open) return;
+  const cfg=c.chart||{}, sp=spec(c,r), types=["auto","bar","line","area","scatter","stat","table"];
+  const opt=(cur,allowNone)=>(allowNone?`<option value="">–</option>`:"")+r.columns.map(k=>
+    `<option value="${esc(k.name)}"${k.name===cur?" selected":""}>${esc(k.name)} (${k.type})</option>`).join("");
+  const multiSeries=sp.type==="line"||sp.type==="area";     // one date on x, several numbers as separate lines
+  const yArr=Array.isArray(sp.y)?sp.y:sp.y?[sp.y]:[];
+  const numCols=r.columns.filter(k=>k.type==="number");
+  // Checkboxes, not a native multi-select: picking several columns with ctrl/cmd-click
+  // isn't discoverable, and this is exactly the "several numbers, several colors, a
+  // legend" case - restricted to one x (time or otherwise), several y's.
+  const yControl=multiSeries
+    ?`<div class="ymulti"><label>Y (pick one or more)</label><div class="chips">${numCols.map(k=>
+        `<label class="chip-check"><input type="checkbox" value="${esc(k.name)}" onchange="toggleY('${id}',this)"
+           ${yArr.includes(k.name)?"checked":""}> ${esc(k.name)}</label>`).join("")}</div></div>`
+    :`<div><label>Y</label><select onchange="setCfg('${id}','y',this.value)">${opt(sp.y,true)}</select></div>`;
+  el.innerHTML=`
+    <div><label>Chart</label><select onchange="setCfg('${id}','type',this.value)">
+      ${types.map(t=>`<option value="${t}"${(cfg.type||"auto")===t?" selected":""}>${t==="auto"?"auto ("+sp.type+")":t}</option>`).join("")}</select></div>
+    <div><label>X</label><select onchange="setCfg('${id}','x',this.value)">${opt(sp.x,true)}</select></div>
+    ${yControl}
+    ${multiSeries&&yArr.length>1?"":`<div><label>Color</label><select onchange="setCfg('${id}','color',this.value)">${opt(sp.color,true)}</select></div>`}
+    <div><label>Size</label><select onchange="setCfg('${id}','size',this.value)">${opt(sp.size,true)}</select></div>
+    <div style="align-self:end"><button class="ghost sm" onclick="setCfg('${id}',null)">Reset to auto</button></div>`;
+}
+function toggleY(id,el){
+  const c=cell(id), r=S.results[id], sp=spec(c,r);
+  const chosen=[...el.closest(".ymulti").querySelectorAll("input[type=checkbox]")]
+    .filter(cb=>cb.checked).map(cb=>cb.value);
+  c.chart={...(c.chart||{}), type:c.chart?.type&&c.chart.type!=="auto"?c.chart.type:sp.type,
+           x:sp.x, y:chosen.length?(chosen.length===1?chosen[0]:chosen):null, color:null, size:sp.size, view:"chart"};
+  renderOut(id); saveDraft(); if(c._cfgOpen) toggleCfg(id,true);
+}
+function setCfg(id,k,v){
+  const c=cell(id);
+  if(k===null) c.chart={type:"auto"};   // no view either - back to fully dynamic
+  else if(k==="type"){
+    const sp=spec(c,S.results[id]);
+    let y=sp.y;
+    if(v!=="line"&&v!=="area"&&Array.isArray(y)) y=y[0]||null;   // multi-y only makes sense on line/area
+    c.chart={...(c.chart||{}),type:v}; if(v!=="auto"){ c.chart.x=sp.x; c.chart.y=y; c.chart.color=sp.color; c.chart.size=sp.size; }
+  }
+  else{ const sp=spec(c,S.results[id]); c.chart={...(c.chart||{}),type:c.chart?.type&&c.chart.type!=="auto"?c.chart.type:sp.type,
+          x:sp.x,y:sp.y,color:sp.color,size:sp.size,[k]:v||null}; }
+  c.chart.view="chart"; renderOut(id); saveDraft(); if(c._cfgOpen) toggleCfg(id,true);
+}
+
+/* ------------------------------------------------------------ charts */
+const cssVar=n=>getComputedStyle(document.documentElement).getPropertyValue(n).trim();
+const fmtNum=v=>v==null?"":typeof v!=="number"?String(v):Math.abs(v)>=1e6?Intl.NumberFormat(undefined,{notation:"compact",maximumFractionDigits:2}).format(v)
+                 :Number.isInteger(v)?v.toLocaleString():v.toLocaleString(undefined,{maximumFractionDigits:2});
+
+function drawChart(host,r,sp,c){
+  host.innerHTML="";
+  if(sp.type==="stat"){
+    const row=r.data[0]||{}, cols=r.columns.filter(k=>k.type==="number"), show=cols.length?cols:r.columns;
+    host.innerHTML=`<div class="stats">${show.slice(0,6).map(k=>`<div class="stat"><div class="v">${esc(fmtNum(row[k.name]))}</div><div class="l">${esc(k.name)}</div></div>`).join("")}</div>`;
+    return;
+  }
+  if(!HAS_PLOT){ host.appendChild(tableEl(r)); return; }
+  const series=[1,2,3,4,5,6,7,8].map(i=>cssVar("--s"+i));
+  const width=Math.max(280,host.clientWidth||host.parentElement.clientWidth||600);
+  const col=n=>r.columns.find(k=>k.name===n);
+  const data=r.data, xs=col(sp.x), yNames=Array.isArray(sp.y)?sp.y:sp.y?[sp.y]:[];
+  if(!xs||!yNames.length||yNames.some(n=>!col(n))){ host.innerHTML=`<div class="dim">Pick an X and a Y column.</div>`; return; }
+  const multiY=yNames.length>1;
+  const fmtDate=d3.timeFormat("%Y-%m-%d");
+  // A bar category's label - String(Date) is ~50 chars ("Sat Jan 01 2024 00:00:00 GMT+0200 (Central
+  // European Summer Time)"), which always tripped the "long labels -> go horizontal" heuristic below
+  // and showed only its truncated tail. A short date keeps time-series bars vertical, as expected.
+  const catLabel=v=>(xs.type==="date"&&v instanceof Date&&!isNaN(v))?fmtDate(v):String(v);
+  const marks=[], o={x:{label:sp.x},y:{label:multiY?null:sp.y,grid:true},width,height:280,marginLeft:56,
+                     style:{background:"transparent",color:cssVar("--dim"),fontSize:"11px"},
+                     color:(sp.color||multiY)?{legend:true,range:series}:undefined};
+  try{
+    if(sp.type==="bar"){
+      const cats=[...new Set(data.map(d=>catLabel(d[sp.x])))];        // keep the query's own order
+      // Orientation is exactly whichever column is on which axis, nothing else -
+      // no separate auto-guess from category count/length that could disagree
+      // with what X/Y actually say (that was confusing: the panel would say
+      // "X: city" while the chart quietly drew it on the y-axis instead).
+      const horizontal=xs.type==="number";
+      if(horizontal){
+        o.y={label:sp.x,domain:cats}; o.x={label:sp.y,grid:true}; o.marginLeft=Math.min(200,12+7*Math.max(...cats.map(s=>s.length)));
+        o.height=Math.max(140,26*cats.length+50);
+        marks.push(Plot.barX(data,{y:d=>catLabel(d[sp.x]),x:sp.y,fill:sp.color||series[0],insetTop:1,insetBottom:1,tip:true}));
+        marks.push(Plot.ruleX([0],{stroke:cssVar("--line")}));
+      }else{
+        // Forced vertical with many/long categories: rotate the labels so they
+        // don't collide - the auto path would have gone horizontal for this,
+        // but a person overriding it still needs to be able to read the axis.
+        const crowded=cats.length>8||cats.some(s=>s.length>10);
+        o.x={label:sp.x,domain:cats,...(crowded?{tickRotate:-40}:{})};
+        if(crowded) o.marginBottom=Math.min(140,50+3*Math.max(...cats.map(s=>s.length)));
+        marks.push(Plot.barY(data,{x:d=>catLabel(d[sp.x]),y:sp.y,fill:sp.color||series[0],insetLeft:1,insetRight:1,tip:true}));
+        marks.push(Plot.ruleY([0],{stroke:cssVar("--line")}));
+      }
+    }else if(sp.type==="line"||sp.type==="area"){
+      // One x, several y columns: reshape wide -> long (one row per x/series pair) so each
+      // number gets its own line, colored and legended by which column it came from. Keeps
+      // every original field too, so a single-y "color by category" grouping still works.
+      const long=multiY?data.flatMap(d=>yNames.map(yn=>({...d,value:d[yn],series:yn})))
+                       :data.map(d=>({...d,value:d[yNames[0]]}));
+      const sorted=[...long].sort((a,b)=>d3.ascending(a[sp.x],b[sp.x]));
+      const stroke=multiY?"series":(sp.color||series[0]), z=multiY?"series":sp.color;
+      if(sp.type==="area") marks.push(Plot.areaY(sorted,{x:sp.x,y:"value",fill:stroke,fillOpacity:.25,z}));
+      marks.push(Plot.lineY(sorted,{x:sp.x,y:"value",stroke,strokeWidth:2,z}));
+      if(sorted.length<=200) marks.push(Plot.dot(sorted,{x:sp.x,y:"value",fill:stroke,r:3}));
+      marks.push(Plot.tip(sorted,Plot.pointerX({x:sp.x,y:"value",stroke:multiY?"series":(sp.color||undefined)})));
+    }else{ // scatter
+      marks.push(Plot.dot(data,{x:sp.x,y:sp.y,stroke:sp.color||series[0],fill:sp.color||series[0],fillOpacity:.35,
+                                r:sp.size?sp.size:4,tip:true}));
+      if(sp.size) o.r={range:[3,18]};
+    }
+    const fig=Plot.plot({...o,marks}); host.appendChild(fig);
+    fig.querySelectorAll('[aria-label$="grid"] line').forEach(l=>l.setAttribute("stroke",cssVar("--grid")));
+  }catch(e){ host.innerHTML=`<div class="banner bad">Could not chart this: ${esc(e.message)}</div>`; host.appendChild(tableEl(r)); }
+}
+let rrT; function rerenderCharts(){ clearTimeout(rrT); rrT=setTimeout(()=>S.nb.cells.forEach(c=>S.results[c.id]&&renderOut(c.id)),120); }
+
+/* --------------------------------------------------------- sidebar resize */
+(function(){
+  const col=$("sidebarcol"), rez=$("sbResizer"), KEY="escrowe.sidebarWidth";
+  const saved=parseInt(localStorage.getItem(KEY)||"",10);
+  if(saved) col.style.flexBasis=Math.min(560,Math.max(180,saved))+"px";
+  let dragging=false, startX=0, startW=0;
+  rez.addEventListener("mousedown",e=>{
+    dragging=true; startX=e.clientX; startW=col.getBoundingClientRect().width;
+    rez.classList.add("dragging"); document.body.style.userSelect="none"; e.preventDefault();
+  });
+  window.addEventListener("mousemove",e=>{
+    if(!dragging) return;
+    const w=Math.min(560,Math.max(180,startW+(e.clientX-startX)));
+    col.style.flexBasis=w+"px"; rerenderCharts();
+  });
+  window.addEventListener("mouseup",()=>{
+    if(!dragging) return; dragging=false; rez.classList.remove("dragging"); document.body.style.userSelect="";
+    try{ localStorage.setItem(KEY,String(Math.round(col.getBoundingClientRect().width))); }catch{}
+  });
+})();
+window.addEventListener("resize",rerenderCharts);
+matchMedia("(prefers-color-scheme: dark)").addEventListener?.("change",rerenderCharts);
+
+/* ---------------------------------------------------------- markdown */
+function inline(s){
+  return esc(s).replace(/`([^`]+)`/g,"<code>$1</code>").replace(/\*\*([^*]+)\*\*/g,"<b>$1</b>")
+    .replace(/(^|[^*])\*([^*]+)\*/g,"$1<i>$2</i>")
+    .replace(/\[([^\]]+)\]\((https?:\/\/[^)\s]+)\)/g,'<a href="$2" target="_blank" rel="noopener">$1</a>');
+}
+function markdown(src){
+  const out=[]; let list=null, para=[];
+  const flush=()=>{ if(para.length){ out.push(`<p>${inline(para.join(" "))}</p>`); para=[]; } if(list){ out.push(`<ul>${list}</ul>`); list=null; } };
+  for(const line of (src||"").split("\n")){
+    const h=line.match(/^(#{1,3})\s+(.*)/), li=line.match(/^\s*[-*]\s+(.*)/);
+    if(h){ flush(); out.push(`<h${h[1].length}>${inline(h[2])}</h${h[1].length}>`); }
+    else if(li){ if(para.length){ out.push(`<p>${inline(para.join(" "))}</p>`); para=[]; } list=(list||"")+`<li>${inline(li[1])}</li>`; }
+    else if(!line.trim()) flush();
+    else { if(list){ out.push(`<ul>${list}</ul>`); list=null; } para.push(line); }
+  }
+  flush(); return out.join("")||`<span class="dim">Write some text.</span>`;
+}
+
+/* ------------------------------------------------------ present mode */
+function setPresent(on){
+  S.present=on; document.body.classList.toggle("present",on);
+  $("presentBtn").textContent=on?"Edit":"Present";
+  S.nb.cells.forEach(c=>c._cfgOpen=false);
+  renderAll();
+}
+$("presentBtn").onclick=()=>setPresent(!S.present);
+document.addEventListener("keydown",e=>{ if(e.key==="Escape"&&S.present) setPresent(false); });
+
+/* ------------------------------------------------------- persistence */
+// What goes to disk (or the local draft): cell definitions plus each cell's
+// last result, so opening a notebook shows it instantly with no re-query and
+// no agent call - Run/Run all refreshes a cell on request.
+function cleanCells(){ return S.nb.cells.map(c=>{ const {type,x,y,color,size,view}=c.chart||{};
+  return {id:c.id,kind:c.kind,title:c.title||"",text:c.text||"",chart:{type:type||"auto",x,y,color,size,view:view||null},
+          result:c.result||null}; }); }
+let draftT; function saveDraft(){ clearTimeout(draftT); draftT=setTimeout(()=>{
+  try{ localStorage.setItem(DRAFT_KEY,JSON.stringify({name:$("nbName").value,cells:cleanCells()})); }catch{}
+  autoSaveNotebook();
+},400); }
+// No manual save required: whatever's being worked on saves itself to the server a
+// moment after each change (same debounce as the local draft). A brand-new notebook
+// with no name yet gets one assigned automatically the first time there's something
+// worth keeping, so this never needs an explicit Save click - the button still exists
+// for "save this exact instant" reassurance, it's just never required.
+function autoSaveNotebook(){
+  if(!S.nb.cells.some(c=>(c.text||"").trim())) return;   // nothing worth saving yet
+  let name=$("nbName").value.trim();
+  if(!name){
+    name=`Untitled ${new Date().toISOString().slice(0,16).replace("T","-").replace(":","-")}`;
+    $("nbName").value=name;
+  }
+  api("/notebooks/"+encodeURIComponent(name),{method:"PUT",body:{cells:cleanCells(),source:S.nb.source||null}})
+    .then(d=>{ $("saveMsg").textContent=`saved ${d.saved_at.slice(11,16)}`; loadNbSidebar(); })
+    .catch(e=>{ $("saveMsg").innerHTML=`<span style="color:var(--bad)">${esc(e.message)}</span>`; });
+}
+function loadDraft(){
+  try{ const d=JSON.parse(localStorage.getItem(DRAFT_KEY)||"null"); if(d?.cells?.length){ S.nb.cells=d.cells; $("nbName").value=d.name||""; } }catch{}
+}
+$("nbName").oninput=saveDraft;
+
+// ⌘S forces the same autosave to happen right now, instead of waiting for the
+// debounce - saving is never actually gated on this, there's no button for it.
+function saveNotebook(){ clearTimeout(draftT); $("saveMsg").innerHTML=`saving <span class="spin"></span>`; autoSaveNotebook(); }
+document.addEventListener("keydown",e=>{ if((e.metaKey||e.ctrlKey)&&e.key==="s"&&S.token){ e.preventDefault(); saveNotebook(); } });
+
+// A notebook's own database, ignoring secrets (a saved source never carries one - see
+// clean_source on the server) - used to tell whether opening a notebook needs a
+// reconnect, not just a cosmetic label difference.
+function sourceSig(s){ if(!s) return null; const {password,token,...rest}=s.params||{};
+  return JSON.stringify({kind:s.kind,params:rest}); }
+
+async function openNotebook(name){
+  const d=await api("/notebooks/"+encodeURIComponent(name));
+  S.nb={name,cells:d.cells.map(c=>({...c,chart:c.chart||{type:"auto"}})),source:d.source||null}; S.results={};
+  // Each cell's last result was saved alongside it: show it instantly, no query, no
+  // agent call. A cell with nothing cached (added but never run before saving) just
+  // shows "not run yet" - Run/Run all is one click away when a refresh is wanted.
+  for(const c of S.nb.cells) if(c.result) S.results[c.id]=analyze(c.result);
+  $("nbName").value=name; $("saveMsg").textContent=""; closeModal(); renderAll(); saveDraft(); loadNbSidebar();
+  // This notebook was saved against a specific database, and it isn't the one
+  // currently connected: prompt to reconnect rather than silently querying the
+  // wrong database (or an agent writing SQL against the wrong schema).
+  if(d.source){
+    const h=await api("/health",{auth:false});
+    if(sourceSig(d.source)!==sourceSig(h.source)) openConnect(d.source, name);
+  }
+}
+// Sidebar tile: every saved notebook, one click to switch, current one highlighted,
+// with its own small delete action (Open/Save as standalone buttons are gone -
+// switching and autosave cover what those did).
+async function loadNbSidebar(){
+  const el=$("nbSidebarList"); if(!el) return;
+  try{
+    const d=await api("/notebooks");
+    el.innerHTML=d.notebooks.length?d.notebooks.map(n=>`
+      <div class="nbrow2${n.name===S.nb.name?" on":""}" title="${esc(n.cells)} cells">
+        <span class="n" onclick="openNotebook('${esc(n.name)}')">${esc(n.name)}</span>
+        <span class="dim">${n.cells}</span>
+        <span class="ghost sm" title="Delete" onclick="event.stopPropagation();deleteNotebook('${esc(n.name)}')" style="cursor:pointer;padding:0 4px">×</span>
+      </div>`).join("")
+      : `<div class="dim">none yet - write something to start.</div>`;
+  }catch{ el.innerHTML=`<div class="dim">couldn't load</div>`; }
+}
+$("nbNewBtn").onclick=()=>{
+  S.nb={name:"",cells:[],source:null}; S.results={}; addCell("ask",false);
+  $("nbName").value=""; $("saveMsg").textContent=""; renderAll(); saveDraft(); loadNbSidebar();
+};
+async function deleteNotebook(name){
+  if(!confirm(`Delete notebook "${name}"?`)) return;
+  await api("/notebooks/"+encodeURIComponent(name),{method:"DELETE"}); loadNbSidebar();
+}
+
+/* ----------------------------------------------------------- connect */
+function dbFields(p,port,pf){pf=pf||{};return `<div class="grid2">
+    <div><label>Host</label><input id="${p}host" value="${esc(pf.host||"127.0.0.1")}"></div>
+    <div><label>Port</label><input id="${p}port" value="${esc(pf.port||port||"")}"></div></div>
+  <div class="grid2">
+    <div><label>User</label><input id="${p}user" value="${esc(pf.user||"")}"></div>
+    <div><label>Password</label><input id="${p}pass" type="password"></div></div>
+  <label>Database</label><input id="${p}db" value="${esc(pf.database||"")}">`;}
+function ducklakeFields(pf){pf=pf||{};return `
+  <label>Quack server (host:port)</label><input id="dqhost" value="${esc(String(pf.metadata||"").replace(/^quack:/,"")||"127.0.0.1:443")}">
+  <label>Quack token</label><input id="dqtoken" type="password">
+  <label>Data path <span class="dim"> - s3://…, r2://…; only needed the first time this catalog is used</span></label>
+  <input id="dqdata" placeholder="s3://bucket/path" value="${esc(pf.data_path||"")}">`;}
+function duckdbFields(pf){return `
+  <label>File path</label><input id="ddbpath" placeholder="/path/to/database.duckdb" value="${esc((pf||{}).path||"")}">`;}
+function sqliteFields(pf){return `
+  <label>File path</label><input id="dsqpath" placeholder="/path/to/database.sqlite" value="${esc((pf||{}).path||"")}">`;}
+function kindFields(kind,pf){
+  if(kind==="ducklake") return ducklakeFields(pf);
+  if(kind==="duckdb") return duckdbFields(pf);
+  if(kind==="sqlite") return sqliteFields(pf);
+  if(kind==="postgres") return dbFields("d",5432,pf);
+  if(kind==="sqlserver") return dbFields("d",1433,pf);
+  return dbFields("d",3306,pf);
+}
+
+// `prefill` is a notebook's saved (secret-free) source, offered when opening a
+// notebook whose database isn't the one currently connected - `forNotebook` names
+// it in the dialog. Neither argument is passed for an ordinary "Connect database".
+function openConnect(prefill,forNotebook){
+  const pf=prefill||{};
+  openModal(`<h1 style="font-size:16px;margin:0 0 4px">Connect a database</h1>
+    <div class="dim">${forNotebook
+        ?`"${esc(forNotebook)}" was saved against a different database - reconnect to open it, or connect elsewhere.`
+        :`Escrowe connects with this account directly. Its own grants decide what the agent - and you - can do.`}</div>
+    <div class="tabs" style="margin-top:12px">
+      <button class="on" data-c="form">Fill in details</button><button data-c="dsn">Paste a connection string</button></div>
+    <div id="cForm">
+      <label>Type</label>
+      <select id="kind" style="width:100%;padding:9px 10px;font-size:inherit">
+        <option value="mysql">MySQL</option><option value="postgres">PostgreSQL</option>
+        <option value="sqlserver">SQL Server</option><option value="ducklake">DuckLake</option>
+        <option value="duckdb">DuckDB (local file)</option>
+        <option value="sqlite">SQLite (local file)</option></select>
+      <label>Name in SQL</label><input id="sname" value="${esc(pf.name||"mysql")}">
+      <div id="kindFields"></div>
+    </div>
+    <div id="cDsn" class="hide">
+      <label>Connection string</label>
+      <input id="dsn" placeholder="mysql://user:pw@host:3306/shop">
+      <label>Name in SQL <span class="dim"> - optional</span></label><input id="dsnName" placeholder="mysql">
+    </div>
+    <div class="row" style="margin-top:14px"><button id="cGo">Connect</button>
+      <button class="ghost" onclick="closeModal()">Close</button></div>
+    <div id="cMsg"></div>
+    <div id="cList" style="margin-top:16px"></div>`);
+
+  if(pf.kind) $("kind").value=pf.kind;
+  const paint=()=>{ $("kindFields").innerHTML=kindFields($("kind").value,$("kind").value===pf.kind?pf.params:null);
+    if($("kind").value!==pf.kind) $("sname").value=$("kind").value; };
+  paint(); $("kind").onchange=paint;
+  document.querySelectorAll("#modal .tabs button").forEach(b=>b.onclick=()=>{
+    document.querySelectorAll("#modal .tabs button").forEach(x=>x.classList.remove("on")); b.classList.add("on");
+    $("cForm").classList.toggle("hide",b.dataset.c!=="form"); $("cDsn").classList.toggle("hide",b.dataset.c!=="dsn"); });
+  $("cGo").onclick=submitConnect; listSources();
+}
+
+function collect(){
+  if(!$("cDsn").classList.contains("hide"))
+    return {dsn:$("dsn").value.trim(), name:$("dsnName").value.trim()||null};
+  const kind=$("kind").value, name=$("sname").value.trim(), v=id=>($(id)?.value||"").trim();
+  let params;
+  if(kind==="ducklake"){
+    params={metadata:"quack:"+v("dqhost")};
+    if(v("dqtoken")) params.token=v("dqtoken");
+    if(v("dqdata")) params.data_path=v("dqdata");
+  }else if(kind==="duckdb"){
+    params={path:v("ddbpath")};
+  }else if(kind==="sqlite"){
+    params={path:v("dsqpath")};
+  }else{
+    const o={host:v("dhost"),user:v("duser"),password:v("dpass"),database:v("ddb")};
+    if(v("dport")) o.port=+v("dport");
+    params=Object.fromEntries(Object.entries(o).filter(([,x])=>x!==""&&x!==undefined));
+  }
+  return {name,kind,params};
+}
+
+async function submitConnect(){
+  $("cGo").disabled=true; $("cMsg").innerHTML=`<div class="dim" style="margin-top:10px">connecting <span class="spin"></span></div>`;
+  try{
+    const req=collect();
+    const d=await api("/sources",{method:"POST",body:req});
+    $("cMsg").innerHTML=`<div class="banner ok"><b>Connected ${esc(d.name)}</b> - ${d.tables.length} tables.</div>`;
+    await listSources(); await loadSchema(); paintDbStatus(await api("/health",{auth:false}));
+    // Bind the open notebook to this database, so switching back to it later
+    // reconnects here automatically instead of silently querying whatever else
+    // happens to be connected at the time.
+    if(!req.dsn){ S.nb.source={name:d.name,kind:req.kind,params:req.params}; saveDraft(); }
+  }catch(e){ $("cMsg").innerHTML=`<div class="banner bad">${esc(e.message)}</div>`; }
+  $("cGo").disabled=false;
+}
+
+async function listSources(){
+  try{
+    const d=await api("/sources");
+    $("cList").innerHTML=`<div class="dim">Connected</div>`+(d.sources.length?d.sources.map(s=>
+      `<div class="row" style="padding:6px 0;border-top:1px solid var(--line)">
+        <b>${esc(s.name)}</b><span class="chip">${esc(s.kind)}</span>
+        <span class="spacer"></span>
+        <button class="ghost sm" onclick="detach('${esc(s.name)}')">Remove</button></div>`).join("")
+      : `<div class="dim">nothing yet</div>`);
+  }catch(e){ $("cList").innerHTML=`<div class="dim">${esc(e.message)}</div>`; }
+}
+async function detach(n){ await api("/sources/"+encodeURIComponent(n),{method:"DELETE"}); listSources(); loadSchema(); }
+
+/* ------------------------------------------------------------- audit */
+async function openAudit(){
+  openModal(`<h1 style="font-size:16px;margin:0 0 10px">Audit</h1><div id="aList" class="dim">loading…</div>
+    <div class="row" style="margin-top:12px"><button class="ghost" onclick="closeModal()">Close</button></div>`);
+  const d=await api("/audit?limit=40");
+  $("aList").innerHTML=`<table><thead><tr><th>when</th><th>who</th><th>what</th><th>decision</th><th>query</th></tr></thead><tbody>`
+    +d.rows.map(r=>`<tr><td>${esc((r.ts||"").slice(11,19))}</td><td>${esc(r.user)}</td>
+      <td>${esc(r.mode)}</td>
+      <td style="color:${r.decision==="allowed"?"var(--ok)":r.decision==="denied"?"var(--bad)":"var(--warn)"}">${esc(r.decision)}</td>
+      <td>${esc((r.candidate_sql||r.question||"").slice(0,70))}</td></tr>`).join("")+`</tbody></table>`;
+}
+
+/* ------------------------------------------------------- shell utils */
+function openModal(html){ $("modal").innerHTML=html; $("overlay").classList.remove("hide"); }
+function closeModal(){ $("overlay").classList.add("hide"); }
+$("overlay").onclick=e=>{ if(e.target.id==="overlay") closeModal(); };
+$("dbStatus").onclick=()=>openConnect(); $("auditBtn").onclick=openAudit; $("outBtn").onclick=()=>logout();
+
+// Logging out drops the token and every cached result; the cell definitions
+// stay (and live on in the local draft), so logging back in doesn't lose work.
+async function logout(){
+  if(S.token){ try{ await api("/logout",{method:"POST"}); }catch{} }
+  S={...S,token:null,user:null,operator:false,idleAt:0,results:{}};
+  if(S.present) setPresent(false);
+  closeModal(); $("app").classList.add("hide"); $("gate").classList.remove("hide"); gateInfo(); $("lu").focus();
+}
+
+// The server's session outlives this, but an unattended browser should not.
+setInterval(()=>{
+  if(!S.token) return;
+  const left=S.idleAt-Date.now();
+  if(left<=0){ logout().then(()=>$("loginMsg").innerHTML=`<div class="banner warn">Logged out after 30 minutes idle.</div>`); }
+  else $("idle").textContent=left<5*60*1000?`idle logout in ${Math.ceil(left/60000)} min`:"";
+},5000);
+["click","keydown"].forEach(ev=>document.addEventListener(ev,touch));
+
+boot();
+</script>
+</body>
+</html>

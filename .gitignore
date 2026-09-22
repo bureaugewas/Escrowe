@@ -1,6 +1,19 @@
+# Python
 __pycache__/
 *.pyc
-data.duckdb
-audit.duckdb
-*.duckdb.wal
-config.yaml
+*.egg-info/
+.venv/
+.pytest_cache/
+.ruff_cache/
+build/
+dist/
+
+# Local state and secrets
+.env
+docker/sample.sqlite
+
+# Editors and OS
+.DS_Store
+.claude/
+.idea/
+.vscode/

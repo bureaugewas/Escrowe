@@ -1,0 +1,65 @@
+version: "3.8"
+
+# Test databases for escrowe's direct engines (see ../tests/test_*_direct.py).
+# Root creds are username root / password root everywhere except SQL Server,
+# which rejects that password outright on its complexity policy - see
+# docker/README.md for the deviation used there.
+services:
+  escrowe-test-mysql:
+    image: mysql:8.0.36
+    container_name: escrowe-test-mysql
+    environment:
+      MYSQL_ROOT_PASSWORD: root
+      MYSQL_DATABASE: clientdb
+    ports:
+      - "23306:3306"
+    volumes:
+      - ./init/mysql.sql:/docker-entrypoint-initdb.d/init.sql:ro
+    healthcheck:
+      test: ["CMD", "mysqladmin", "ping", "-h", "localhost", "-uroot", "-proot"]
+      interval: 5s
+      timeout: 5s
+      retries: 20
+
+  escrowe-test-postgres:
+    image: postgres:16.4
+    container_name: escrowe-test-postgres
+    environment:
+      POSTGRES_USER: root
+      POSTGRES_PASSWORD: root
+      POSTGRES_DB: clientdb
+    ports:
+      - "25432:5432"
+    volumes:
+      - ./init/postgres.sql:/docker-entrypoint-initdb.d/init.sql:ro
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U root -d clientdb"]
+      interval: 5s
+      timeout: 5s
+      retries: 20
+
+  escrowe-test-sqlserver:
+    image: mcr.microsoft.com/mssql/server:2022-CU14-ubuntu-22.04
+    container_name: escrowe-test-sqlserver
+    environment:
+      ACCEPT_EULA: "Y"
+      MSSQL_SA_PASSWORD: "Root_pw1"   # "root" is rejected by SQL Server's password policy - see README
+    ports:
+      - "21433:1433"
+    healthcheck:
+      test: ["CMD-SHELL", "/opt/mssql-tools18/bin/sqlcmd -C -S localhost -U sa -P \"$$MSSQL_SA_PASSWORD\" -Q 'SELECT 1' || exit 1"]
+      interval: 5s
+      timeout: 5s
+      retries: 30
+
+  escrowe-test-sqlserver-init:
+    image: mcr.microsoft.com/mssql-tools
+    container_name: escrowe-test-sqlserver-init
+    depends_on:
+      escrowe-test-sqlserver:
+        condition: service_healthy
+    volumes:
+      - ./init/sqlserver.sql:/init.sql:ro
+    entrypoint: ["/opt/mssql-tools/bin/sqlcmd", "-S", "escrowe-test-sqlserver", "-U", "sa",
+                "-P", "Root_pw1", "-i", "/init.sql"]
+    restart: "no"
