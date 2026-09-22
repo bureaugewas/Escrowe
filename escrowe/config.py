@@ -24,6 +24,7 @@ class Settings:
     token_ttl_s: int = 12 * 3600
     server_url: str = DEFAULT_SERVER_URL
     api_enabled: bool = False             # `escrowe serve` refuses to start unless set
+    feed_enabled: bool = True             # allow \feed (query results back to the LLM)
 
     @property
     def store_path(self) -> Path:
@@ -78,4 +79,5 @@ def load_settings() -> Settings:
         agent_attempts=int(env("ESCROWE_AGENT_ATTEMPTS", "3")),
         server_url=env("ESCROWE_SERVER", DEFAULT_SERVER_URL),
         api_enabled=_truthy(env("ESCROWE_API_ENABLED")),
+        feed_enabled=_truthy(env("ESCROWE_FEED_ENABLED", "1")),
     )

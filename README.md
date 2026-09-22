@@ -88,6 +88,13 @@ last result's own data), `\help`, `\q`.
 ESCROWE_API_ENABLED=1 escrowe serve
 ```
 
+`user:pw` is not a separate server account - it is the same database
+credentials each person already has (the ones you'd hand to `escrowe
+connect`). The server does not store or issue its own passwords; login just
+opens a real connection to the database as that person and keeps it as
+their session. So a teammate logs in with the database account their DBA
+already gave them, not with anything escrowe generates.
+
 Then from another machine: `escrowe login`, `escrowe shell`, or Python:
 
 ```python
@@ -116,8 +123,13 @@ Adding a kind is one module in `escrowe/engines/` plus a registry entry; see
 
 ## Configuration
 
-Read from the environment, or a `.env` file in the working directory or in
-`~/.escrowe`.
+All of these are read automatically on every run - nothing extra to enable.
+Escrowe reads its environment at startup (`load_settings()`), first loading
+a `.env` file from the current directory if one exists, then one from
+`~/.escrowe` (later files fill in only variables not already set, so a
+value exported in your shell always wins). Anything you export in your
+shell profile, or set in either `.env` file, applies with no further
+configuration; unset variables just keep their default in the table below.
 
 | Variable | Purpose |
 |---|---|
@@ -127,6 +139,7 @@ Read from the environment, or a `.env` file in the working directory or in
 | `ESCROWE_LLM_THINKING` | Extended-thinking token budget (API-key provider only) |
 | `ESCROWE_MAX_ROWS`, `ESCROWE_QUERY_TIMEOUT`, `ESCROWE_AGENT_ATTEMPTS` | Query and agent limits |
 | `ESCROWE_API_ENABLED` | Allow `escrowe serve` |
+| `ESCROWE_FEED_ENABLED` | Allow `\feed` (query results sent back to the LLM), default on |
 | `ESCROWE_JWT_SECRET` | Session signing secret (generated if unset) |
 | `ESCROWE_SERVER` | Default server URL for client commands |
 | `ESCROWE_PASSWORD`, `ESCROWE_USER` | Credentials for scripted `--local` commands |

@@ -131,12 +131,15 @@ def disconnect():
 
 _DSN_HELP = "escrowe://user:pass@host:port (else the saved login)"
 _LOCAL_HELP = "Run in this process against the connected database"
+_USER_HELP = "Database account (default: the one saved by `escrowe connect`, or ESCROWE_USER)"
+_PASSWORD_HELP = "Its password (default: ESCROWE_PASSWORD, else asked for)"
 
 
 @app.command()
 def ask(question: str, dsn: str = typer.Option(None, help=_DSN_HELP),
         local: bool = typer.Option(False, "--local", help=_LOCAL_HELP),
-        user: str = typer.Option(None), password: str = typer.Option(None),
+        user: str = typer.Option(None, "--user", "-u", help=_USER_HELP),
+        password: str = typer.Option(None, "--password", "-p", help=_PASSWORD_HELP),
         as_json: bool = typer.Option(True, "--json/--table")):
     """Ask one question; print the query and the rows as JSON."""
     _one_shot(lambda c: c.ask(question), dsn, local, user, password, as_json)
@@ -145,7 +148,8 @@ def ask(question: str, dsn: str = typer.Option(None, help=_DSN_HELP),
 @app.command()
 def sql(query: str, dsn: str = typer.Option(None, help=_DSN_HELP),
         local: bool = typer.Option(False, "--local", help=_LOCAL_HELP),
-        user: str = typer.Option(None), password: str = typer.Option(None),
+        user: str = typer.Option(None, "--user", "-u", help=_USER_HELP),
+        password: str = typer.Option(None, "--password", "-p", help=_PASSWORD_HELP),
         as_json: bool = typer.Option(True, "--json/--table")):
     """Run one SQL query as the connected account; print the rows as JSON."""
     _one_shot(lambda c: c.sql(query), dsn, local, user, password, as_json)
@@ -154,7 +158,8 @@ def sql(query: str, dsn: str = typer.Option(None, help=_DSN_HELP),
 @app.command()
 def meta(dsn: str = typer.Option(None, help=_DSN_HELP),
          local: bool = typer.Option(False, "--local", help=_LOCAL_HELP),
-         user: str = typer.Option(None), password: str = typer.Option(None)):
+         user: str = typer.Option(None, "--user", "-u", help=_USER_HELP),
+         password: str = typer.Option(None, "--password", "-p", help=_PASSWORD_HELP)):
     """Print the schema the agent sees."""
     console.print(_open(local, dsn, user, password).metadata()["text"])
 
@@ -183,16 +188,16 @@ def _open(local: bool, dsn: str | None, user: str | None, password: str | None):
     if local:
         conn = embedded(load_settings(), operator=True)
         src = conn.svc.source
-        if user and password:
-            conn.login(user, password)
-        elif src is not None and conn.svc.engine is None:
-            # Saved by `escrowe connect`, but the password was not kept: ask once.
+        if src is not None and conn.svc.engine is None:
+            # Saved by `escrowe connect`, but the password was not kept: ask for what is missing.
             try:
-                u = user or src.user or typer.prompt("user")
-                p = typer.prompt("password", hide_input=True)
+                user = user or src.user or typer.prompt("user")
+                password = password or typer.prompt("password", hide_input=True)
             except (EOFError, KeyboardInterrupt, typer.Abort):
-                raise EscroweAuthError("No password on file; pass --user/--password or set ESCROWE_PASSWORD.")
-            conn.login(u, p)
+                raise EscroweAuthError("No password on file; pass --password or set ESCROWE_PASSWORD.")
+            conn.login(user, password)
+        elif user and password:
+            conn.login(user, password)
         return conn
     if dsn:
         conn = connect(dsn, user, password)
