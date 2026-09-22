@@ -163,6 +163,14 @@
   body.present main{grid-template-columns:1fr;padding:18px 22px}
   body.present #cells{display:grid;grid-template-columns:repeat(auto-fill,minmax(380px,1fr));gap:16px;align-items:start}
   body.present .cell.wide{grid-column:1/-1}
+  .cell .grip{display:none}
+  body.present .cell{position:relative;cursor:grab}
+  body.present .cell .grip{display:block}
+  body.present .cell.dragging{opacity:.4}
+  body.present .cell.dropTarget{outline:2px dashed var(--accent);outline-offset:2px}
+  body.present .cell .grip{position:absolute;right:4px;bottom:4px;width:14px;height:14px;cursor:nwse-resize;
+    border-right:2px solid var(--dim);border-bottom:2px solid var(--dim);border-radius:0 0 3px 0;opacity:.5}
+  body.present .cell .grip:hover{opacity:1}
   body.present .cell .title{pointer-events:none;border-color:transparent!important;background:transparent!important;
                             font-size:15px;padding-left:0}
   body.present .cell .head{margin-bottom:2px}
@@ -465,9 +473,46 @@ function renderCell(id){
       <textarea class="${c.kind==="sql"?"code":""}" placeholder="${esc(PLACEHOLDER[c.kind])}"
         oninput="onEdit('${id}',this)" onkeydown="if((event.metaKey||event.ctrlKey)&&event.key==='Enter'){event.preventDefault();runCell('${id}')}"></textarea>
     </div>
-    <div class="out"></div>`;
+    <div class="out"></div>
+    <div class="grip" title="Drag to resize" onmousedown="startResize(event,'${id}')"></div>`;
   const ta=el.querySelector("textarea"); ta.value=c.text; autosize(ta);
+  el.draggable=S.present; el.ondragstart=e=>dragCell(e,id); el.ondragover=e=>{e.preventDefault();el.classList.add("dropTarget")};
+  el.ondragleave=()=>el.classList.remove("dropTarget"); el.ondrop=e=>dropCell(e,id);
+  applySpan(id);
   renderOut(id);
+}
+
+/* -------------------------------------------- present-mode layout */
+// A cell's tile size lives in its chart config (chart.span = grid columns,
+// chart.h = chart height in px) so it's saved with the notebook. Both are
+// only set by hand: the auto layout is untouched until someone drags a corner.
+function gridCols(){ return getComputedStyle($("cells")).gridTemplateColumns.split(" ").length; }
+function applySpan(id){
+  const c=cell(id), el=document.querySelector(`[data-id="${id}"]`); if(!el) return;
+  const span=c.chart?.span;
+  el.style.gridColumn=S.present&&span?`span ${Math.min(span,gridCols())}`:"";
+}
+function startResize(e,id){
+  if(!S.present) return; e.preventDefault(); e.stopPropagation();
+  const c=cell(id), el=e.target.closest(".cell"); c.chart=c.chart||{type:"auto"};
+  const host=$("cells"), colW=host.clientWidth/gridCols();
+  const span0=c.chart.span||(el.classList.contains("wide")?gridCols():1), h0=c.chart.h||280, x0=e.clientX, y0=e.clientY;
+  el.draggable=false;
+  const move=ev=>{
+    c.chart.span=Math.max(1,Math.min(gridCols(),Math.round(span0+(ev.clientX-x0)/colW)));
+    c.chart.h=Math.max(160,Math.min(900,Math.round(h0+(ev.clientY-y0))));
+    applySpan(id); rerenderCharts();
+  };
+  const up=()=>{ window.removeEventListener("mousemove",move); window.removeEventListener("mouseup",up); el.draggable=true; saveDraft(); };
+  window.addEventListener("mousemove",move); window.addEventListener("mouseup",up);
+}
+let dragId=null;
+function dragCell(e,id){ dragId=id; e.dataTransfer.effectAllowed="move"; e.target.classList.add("dragging"); }
+function dropCell(e,id){
+  e.preventDefault(); document.querySelectorAll(".cell.dragging,.cell.dropTarget").forEach(x=>x.classList.remove("dragging","dropTarget"));
+  if(!dragId||dragId===id) return;
+  const cells=S.nb.cells, from=cells.findIndex(c=>c.id===dragId), to=cells.findIndex(c=>c.id===id);
+  const [m]=cells.splice(from,1); cells.splice(to,0,m); dragId=null; renderAll(); saveDraft();
 }
 function autosize(ta){ ta.style.height="auto"; ta.style.height=Math.min(Math.max(ta.scrollHeight+2,74),420)+"px"; }
 function onEdit(id,ta){ const c=cell(id); c.text=ta.value; autosize(ta); if(c.kind==="md") renderOut(id); saveDraft(); }
@@ -716,7 +761,7 @@ function drawChart(host,r,sp,c){
   // European Summer Time)"), which always tripped the "long labels -> go horizontal" heuristic below
   // and showed only its truncated tail. A short date keeps time-series bars vertical, as expected.
   const catLabel=v=>(xs.type==="date"&&v instanceof Date&&!isNaN(v))?fmtDate(v):String(v);
-  const marks=[], o={x:{label:sp.x},y:{label:multiY?null:sp.y,grid:true},width,height:280,marginLeft:56,
+  const marks=[], o={x:{label:sp.x},y:{label:multiY?null:sp.y,grid:true},width,height:(S.present&&c.chart?.h)||280,marginLeft:56,
                      style:{background:"transparent",color:cssVar("--dim"),fontSize:"11px"},
                      color:(sp.color||multiY)?{legend:true,range:series}:undefined};
   try{
@@ -821,8 +866,8 @@ document.addEventListener("keydown",e=>{ if(e.key==="Escape"&&S.present) setPres
 // What goes to disk (or the local draft): cell definitions plus each cell's
 // last result, so opening a notebook shows it instantly with no re-query and
 // no agent call - Run/Run all refreshes a cell on request.
-function cleanCells(){ return S.nb.cells.map(c=>{ const {type,x,y,color,size,view}=c.chart||{};
-  return {id:c.id,kind:c.kind,title:c.title||"",text:c.text||"",chart:{type:type||"auto",x,y,color,size,view:view||null},
+function cleanCells(){ return S.nb.cells.map(c=>{ const {type,x,y,color,size,view,span,h}=c.chart||{};
+  return {id:c.id,kind:c.kind,title:c.title||"",text:c.text||"",chart:{type:type||"auto",x,y,color,size,view:view||null,span,h},
           result:c.result||null}; }); }
 let draftT; function saveDraft(){ clearTimeout(draftT); draftT=setTimeout(()=>{
   try{ localStorage.setItem(DRAFT_KEY,JSON.stringify({name:$("nbName").value,cells:cleanCells()})); }catch{}
