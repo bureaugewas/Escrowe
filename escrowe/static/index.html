@@ -378,6 +378,7 @@ function renderCell(id){
              oninput="cell('${id}').title=this.value;saveDraft()">
       <div class="tools">
         ${c.kind!=="md"?`<button class="sm" onclick="runCell('${id}')" title="Run (⌘/Ctrl+Enter)">Run</button>`:""}
+        ${c.result?.sql?`<button class="icon" onclick="refreshCell('${id}')" title="Refresh data (reruns the last query, no agent call)">⟳</button>`:""}
         <button class="icon" onclick="moveCell('${id}',-1)" title="Move up">↑</button>
         <button class="icon" onclick="moveCell('${id}',1)" title="Move down">↓</button>
         <button class="icon" onclick="addCell('${c.kind}',true,'${id}')" title="Add a cell below">+</button>
@@ -404,6 +405,20 @@ async function runCell(id){
   try{
     const r=await api(c.kind==="ask"?"/ask":"/sql",{method:"POST",body:c.kind==="ask"?{question:text}:{sql:text}});
     S.results[id]=analyze(r); c.result=r;      // cached and saved, so reopening needs no query/agent call
+  }catch(err){
+    const kind=err.status===403?"Not allowed":err.status===401?"Session ended":"Error";
+    S.results[id]={error:`<b>${kind}.</b> ${esc(err.message)}`};
+    if(err.status===401) setTimeout(logout,1200);
+  }
+  el.classList.remove("running"); renderOut(id); saveDraft();
+}
+async function refreshCell(id){
+  const c=cell(id), el=document.querySelector(`[data-id="${id}"]`); const sql=c?.result?.sql; if(!c||!sql) return;
+  touch(); el.classList.add("running");
+  el.querySelector(".out").innerHTML=`<div class="dim">refreshing <span class="spin"></span></div>`;
+  try{
+    const r=await api("/sql",{method:"POST",body:{sql}});
+    S.results[id]=analyze(r); c.result=r;
   }catch(err){
     const kind=err.status===403?"Not allowed":err.status===401?"Session ended":"Error";
     S.results[id]={error:`<b>${kind}.</b> ${esc(err.message)}`};
