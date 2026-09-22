@@ -88,6 +88,13 @@ last result's own data), `\help`, `\q`.
 ESCROWE_API_ENABLED=1 escrowe serve
 ```
 
+`user:pw` is not a separate server account - it is the same database
+credentials each person already has (the ones you'd hand to `escrowe
+connect`). The server does not store or issue its own passwords; login just
+opens a real connection to the database as that person and keeps it as
+their session. So a teammate logs in with the database account their DBA
+already gave them, not with anything escrowe generates.
+
 Then from another machine: `escrowe login`, `escrowe shell`, or Python:
 
 ```python
