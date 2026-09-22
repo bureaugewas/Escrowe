@@ -308,6 +308,8 @@ class Escrowe:
         context = {"user": principal.user, "session": session_id}
 
         if feed_data is not None:
+            if not self.settings.feed_enabled:
+                raise Denied("\\feed is disabled (ESCROWE_FEED_ENABLED=0).")
             return self._ask_about_fed_data(principal, question, feed_data, history, context, on_status, on_token)
 
         # An exact repeat of an earlier question replays its result: no agent
