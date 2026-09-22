@@ -59,10 +59,6 @@ class FakeEngine(DirectEngine):
             if t["comment"]:
                 self.conn.execute(f"COMMENT ON TABLE {name} IS '{t['comment']}'")
 
-    @classmethod
-    def test_login(cls, **params) -> None:
-        cls(**params).close()
-
     def close(self) -> None:
         try:
             self.conn.close()
@@ -88,8 +84,6 @@ class FakeEngine(DirectEngine):
         except Exception as e:
             raise EngineError(str(e).splitlines()[0][:300]) from e
 
-    def diagnose(self) -> dict:
-        return {"sources": [{"name": self.user, "kind": "fake"}], "tables": sorted(self.allowed)}
 
 
 def register() -> None:

@@ -1,38 +1,27 @@
-"""SQLite, end to end, against a real file - no container needed. Run
-docker/seed_sqlite.py first to produce the sample file this test reads,
-mirroring tests/test_mysql_direct.py's real-engine pattern (no mocks)."""
+"""SQLite, end to end, against a real file. No container is needed: the
+sample database is generated into a temp directory by docker/seed_sqlite.py."""
 
-import os
-import shutil
-import sqlite3
+import sys
 from pathlib import Path
 
 import pytest
 
-SAMPLE = Path(os.environ.get("ESCROWE_TEST_SQLITE_PATH",
-                              Path(__file__).parent.parent / "docker" / "sample.sqlite"))
-
-pytestmark = pytest.mark.skipif(not SAMPLE.exists(),
-                                reason="run `python docker/seed_sqlite.py` first")
+sys.path.insert(0, str(Path(__file__).parent.parent / "docker"))
+from seed_sqlite import seed  # noqa: E402
 
 
 @pytest.fixture
 def db_path(tmp_path):
-    # Copy so the write-blocking test can't corrupt the shared sample file.
-    p = tmp_path / "sample.sqlite"
-    shutil.copyfile(SAMPLE, p)
-    return str(p)
+    return str(seed(tmp_path / "sample.sqlite"))
 
 
 @pytest.fixture
 def direct_svc(tmp_path, db_path):
-    from escrowe.config import load_settings
+    from escrowe.config import Settings
     from escrowe.service import Escrowe
     from escrowe.sources import Source
 
-    settings = load_settings(ephemeral=True)
-    settings.home = tmp_path
-    svc = Escrowe(settings)
+    svc = Escrowe(Settings(home=tmp_path, llm_provider="mock"))
     svc.set_source(Source("clientdb", "sqlite", {"path": db_path}), persist=False)
     return svc
 
@@ -61,7 +50,7 @@ def test_direct_mode_still_blocks_writes_for_the_agent(direct_svc):
 
 
 def test_direct_catalog_reads_real_sqlite_tables(direct_svc):
-    from escrowe.metadata import Metadata
-    text = Metadata.render(Metadata(direct_svc.engine).all_tables())
+    from escrowe.metadata import read_schema, render_schema
+    text = render_schema(read_schema(direct_svc.engine))
     assert "customers" in text
     assert "orders" in text

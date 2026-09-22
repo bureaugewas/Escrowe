@@ -58,7 +58,7 @@ def test_agent_result_never_contains_rows_type():
     """AgentResult must stay incapable of carrying data back from a query.
     Adding a field here is fine; adding one that could hold rows is not."""
     fields = AgentResult.__dataclass_fields__
-    assert set(fields) == {"sql", "refusal", "answer", "probe", "note", "provider", "attempts", "needs_login"}
+    assert set(fields) == {"sql", "answer", "refusal", "probe", "provider", "needs_login"}
     assert all(f.type in ("str | None", "str", "bool", "list[Attempt]") for f in fields.values()), \
         {n: f.type for n, f in fields.items()}
 
@@ -67,13 +67,13 @@ def test_metadata_never_reads_data(svc, alice, monkeypatch):
     """None of a table's actual values may reach the agent. The catalog was
     already snapshotted once when svc connected (see _connect); reading it
     back for the agent must issue no further query of any kind."""
-    from escrowe.metadata import Metadata
+    from escrowe.metadata import render_schema
 
     executed = []
     original = svc.engine.execute
     monkeypatch.setattr(svc.engine, "execute", lambda sql, *a, **k: (executed.append(sql), original(sql, *a, **k))[1])
 
-    text = Metadata.render(svc.catalog_for(alice))
+    text = render_schema(svc.schema_for(alice))
     assert executed == [], f"metadata issued queries: {executed}"
     assert "Acme" not in text and "Globex" not in text            # real row values
     assert "customers" in text and "tier VARCHAR" in text and "Customer master data" in text
@@ -82,14 +82,14 @@ def test_metadata_never_reads_data(svc, alice, monkeypatch):
 def test_transcript_records_exactly_what_was_sent(svc, alice, tmp_path):
     """The log is the evidence for the blind-agent claim, so it must hold the real
     prompt, written as it is sent, not a reconstruction afterwards."""
-    from escrowe.transcript import Transcript, default_path
+    from escrowe.transcript import Transcript
 
     svc.agent = RecordingAgent(['{"sql": "SELECT tier, count(*) AS n FROM customers GROUP BY tier"}'])
     svc.agent.transcript = svc.transcript
     res = svc.ask(alice, "how many customers per tier?")
     assert res.table.num_rows == 3
 
-    entries = Transcript(default_path(svc.settings.home)).read()
+    entries = Transcript(svc.settings.transcript_path).read()
     assert len(entries) == 1
     e = entries[0]
     assert e["user"] == alice.user
@@ -102,7 +102,7 @@ def test_transcript_records_exactly_what_was_sent(svc, alice, tmp_path):
 
 def test_transcript_proves_no_data_reached_the_model(svc, alice, bob):
     """Read the log back and check it against the real values in the database."""
-    from escrowe.transcript import Transcript, default_path
+    from escrowe.transcript import Transcript
 
     names = all_customer_names(svc, bob)
     svc.agent = RecordingAgent(['{"sql": "SELECT count(*) AS n FROM customers"}'])
@@ -111,14 +111,14 @@ def test_transcript_proves_no_data_reached_the_model(svc, alice, bob):
 
     everything = "\n".join(
         e["sent"]["system"] + e["sent"]["user"]
-        for e in Transcript(default_path(svc.settings.home)).read())
+        for e in Transcript(svc.settings.transcript_path).read())
     assert not any(n in everything for n in names)
 
 
 def test_a_failed_call_is_still_recorded(svc, alice):
     """A prompt that errored was still shown to a model, so it belongs in the log."""
     from escrowe.agent import Agent
-    from escrowe.transcript import Transcript, default_path
+    from escrowe.transcript import Transcript
 
     class Broken(Agent):
         def _ask(self, system, user, on_token=None):
@@ -126,9 +126,9 @@ def test_a_failed_call_is_still_recorded(svc, alice):
 
     svc.agent = Broken("mock")
     svc.agent.transcript = svc.transcript
-    with pytest.raises(Exception):
+    with pytest.raises(RuntimeError):
         svc.ask(alice, "anything")
-    entries = Transcript(default_path(svc.settings.home)).read()
+    entries = Transcript(svc.settings.transcript_path).read()
     assert entries and "provider exploded" in (entries[-1]["error"] or "")
     assert entries[-1]["sent"]["system"]
 
@@ -137,10 +137,10 @@ def test_the_agent_can_only_see_what_the_account_can_see(svc, alice, bob):
     """There is no escrowe-side grant: alice's account simply doesn't have
     `employees` in its own catalog, the same way a real database would leave
     it out for an ungranted account."""
-    from escrowe.metadata import Metadata
-    alice_text = Metadata.render(svc.catalog_for(alice))
+    from escrowe.metadata import render_schema
+    alice_text = render_schema(svc.schema_for(alice))
     assert "employees" not in alice_text and "customers" in alice_text
-    bob_text = Metadata.render(svc.catalog_for(bob))
+    bob_text = render_schema(svc.schema_for(bob))
     assert "employees" in bob_text
 
 

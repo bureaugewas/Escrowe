@@ -1,10 +1,11 @@
 """Identity: escrowe proves who you are by opening a real connection to the
 database, and keeps nothing about your password."""
 
+import json
+
 import pytest
 
-from escrowe.auth import AuthError as VerifyError, DirectVerifier, build_verifier
-from escrowe.service import AuthError
+from escrowe.service import AuthError, login_error_message
 from escrowe.sources import Source
 
 
@@ -20,8 +21,8 @@ def test_bad_password_is_rejected(svc):
 
 
 def test_no_password_is_retained_anywhere(svc):
-    tok = svc.login("bob", "bob")["token"]
     from escrowe.tokens import verify
+    tok = svc.login("bob", "bob")["token"]
     session = svc.sessions[verify(svc.secret, tok)["jti"]]
     assert not hasattr(session, "password")
     assert not hasattr(session.engine, "password")
@@ -35,54 +36,43 @@ def test_logout_ends_the_session(svc):
     svc.logout(tok)                                         # idempotent
 
 
-def test_direct_verifier_opens_a_real_connection(svc):
-    v = build_verifier(svc.source())
-    assert isinstance(v, DirectVerifier)
-    assert v.verify("bob", "bob").user == "bob"
-    with pytest.raises(VerifyError):
-        v.verify("bob", "nope")
-
-
-def test_verifier_never_leaks_driver_detail():
+def test_login_failure_never_leaks_driver_detail():
     """A failed login must not tell the caller whether the host, user or
     database was the problem."""
-    v = DirectVerifier("mysql", {"host": "127.0.0.1", "port": 59999, "database": "nope"})
-    with pytest.raises(VerifyError) as e:
-        v.verify("alice", "whatever")
-    msg = str(e.value)
-    assert "127.0.0.1" not in msg and "alice" not in msg and "whatever" not in msg
+    for raw in ("Access denied for user 'alice'@'10.0.0.1'", "Unknown database 'nope'",
+                "Can't connect to MySQL server on '127.0.0.1'", "FATAL: password authentication failed"):
+        msg = login_error_message(Exception(raw))
+        assert "alice" not in msg and "nope" not in msg and "127.0.0.1" not in msg
+
+
+def test_login_against_an_unreachable_database_is_reported_as_such(svc):
+    svc.source = Source("db", "mysql", {"host": "127.0.0.1", "port": 59999, "database": "nope"})
+    with pytest.raises(AuthError) as e:
+        svc.login("alice", "whatever")
+    assert "127.0.0.1" not in str(e.value) and "whatever" not in str(e.value)
 
 
 def test_persisted_config_never_contains_a_secret():
-    import json
     s = Source("shop", "mysql", {"host": "h", "user": "u", "password": "sekret", "database": "d"})
     persisted = json.loads(s.persisted_json())
-    assert "password" not in persisted and "sekret" not in s.persisted_json()
+    assert "sekret" not in s.persisted_json()
     assert persisted == {"host": "h", "user": "u", "database": "d"}
-    keep = Source("x", "mysql", {"host": "h", "user": "u", "password_env": "PW"})
-    assert "password_env" in keep.persisted_json()
 
 
 def test_source_connected_without_persisting_leaves_nothing_on_disk(svc):
-    """The common case: `escrowe connect` attaches for this session only, and
-    nothing - not even the host or username - is written unless asked."""
     svc.set_source(Source("other", "fake", {"host": "h", "user": "bob", "password": "bob"}), persist=False)
     assert svc.store.sources() == []
-    assert svc.source().name == "other"
+    assert svc.source.name == "other"
 
 
-def test_a_source_stored_by_an_older_escrowe_still_connects(tmp_path):
-    """A store from before the escrowe/passthrough/direct modes were removed
-    may still have a `mode` key on a saved source; that store shouldn't need
-    manual cleanup for escrowe to start."""
-    import json
-    from escrowe.config import Attachment, Settings
+def test_a_saved_source_reconnects_only_once_a_password_is_supplied(tmp_path):
+    from escrowe.config import Settings
     from escrowe.service import Escrowe
     from escrowe.store import Store
 
-    store = Store(tmp_path / "old.sqlite")
-    store.save_source("fake", "fake", json.dumps(
-        {"host": "h", "user": "bob", "password": "bob", "mode": "direct"}))
-    settings = Settings(home=tmp_path, jwt_secret="t", attachments=[], llm_provider="mock")
-    svc = Escrowe(settings, store=store)
-    assert svc.engine is not None
+    store = Store(tmp_path / "saved.sqlite")
+    store.save_source("fake", "fake", Source("fake", "fake", {"user": "bob", "password": "bob"}).persisted_json())
+    svc = Escrowe(Settings(home=tmp_path, jwt_secret="t", llm_provider="mock"), store=store)
+    assert svc.source is not None and svc.engine is None       # known, not connected
+    svc.login("bob", "bob")
+    assert len(svc.sessions) == 1

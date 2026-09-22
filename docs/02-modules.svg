@@ -1,0 +1,88 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 900 600" width="900" height="600" font-family="-apple-system, Segoe UI, Helvetica, Arial, sans-serif" font-size="13">
+  <defs>
+    <marker id="arrow" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="8" markerHeight="8" orient="auto-start-reverse">
+      <path d="M0,0 L10,5 L0,10 z" fill="#3b4a5a"/>
+    </marker>
+  </defs>
+  <rect width="900" height="600" fill="#ffffff"/>
+  <text x="20" y="30" font-size="18" font-weight="600" fill="#1f2933">2. The modules: three ways in, one core, pluggable engines</text>
+
+  <!-- layer 1: interfaces -->
+  <rect x="20" y="50" width="860" height="110" rx="10" fill="#f6f8fa" stroke="#c7d2de"/>
+  <text x="34" y="72" font-size="12" font-weight="600" fill="#5c6b7a">INTERFACES</text>
+  <rect x="40" y="82" width="250" height="64" rx="8" fill="#ffffff" stroke="#4c6a8a" stroke-width="1.5"/>
+  <text x="165" y="104" text-anchor="middle" font-weight="600" fill="#1f2933">cli/</text>
+  <text x="165" y="122" text-anchor="middle" fill="#5c6b7a" font-size="12">__init__ commands · repl prompt</text>
+  <text x="165" y="138" text-anchor="middle" fill="#5c6b7a" font-size="12">wizard setup · console styles</text>
+  <rect x="325" y="82" width="250" height="64" rx="8" fill="#ffffff" stroke="#4c6a8a" stroke-width="1.5"/>
+  <text x="450" y="104" text-anchor="middle" font-weight="600" fill="#1f2933">server.py</text>
+  <text x="450" y="122" text-anchor="middle" fill="#5c6b7a" font-size="12">HTTP API + static/index.html UI</text>
+  <text x="450" y="138" text-anchor="middle" fill="#5c6b7a" font-size="12">notebooks.py stores notebooks</text>
+  <rect x="610" y="82" width="250" height="64" rx="8" fill="#ffffff" stroke="#4c6a8a" stroke-width="1.5"/>
+  <text x="735" y="104" text-anchor="middle" font-weight="600" fill="#1f2933">client.py</text>
+  <text x="735" y="122" text-anchor="middle" fill="#5c6b7a" font-size="12">Connection (HTTP)</text>
+  <text x="735" y="138" text-anchor="middle" fill="#5c6b7a" font-size="12">LocalConnection (in-process)</text>
+
+  <line x1="165" y1="160" x2="330" y2="200" stroke="#3b4a5a" stroke-width="1.5" marker-end="url(#arrow)"/>
+  <line x1="450" y1="160" x2="450" y2="200" stroke="#3b4a5a" stroke-width="1.5" marker-end="url(#arrow)"/>
+  <line x1="735" y1="160" x2="570" y2="200" stroke="#3b4a5a" stroke-width="1.5" marker-end="url(#arrow)"/>
+
+  <!-- layer 2: core -->
+  <rect x="250" y="200" width="400" height="90" rx="10" fill="#eaf2fc" stroke="#2a78d6" stroke-width="2"/>
+  <text x="450" y="224" text-anchor="middle" font-weight="700" font-size="15" fill="#2a78d6">service.py · class Escrowe</text>
+  <text x="450" y="248" text-anchor="middle" fill="#1f2933">set_source() · login() · sql() · ask()</text>
+  <text x="450" y="270" text-anchor="middle" fill="#5c6b7a" font-size="12">holds the engine, the agent, sessions, per-session history</text>
+
+  <line x1="450" y1="290" x2="450" y2="320" stroke="#3b4a5a" stroke-width="1.5" marker-end="url(#arrow)"/>
+
+  <!-- layer 3: parts -->
+  <rect x="20" y="320" width="860" height="120" rx="10" fill="#f6f8fa" stroke="#c7d2de"/>
+  <text x="34" y="342" font-size="12" font-weight="600" fill="#5c6b7a">USED BY THE CORE</text>
+  <g fill="#ffffff" stroke="#4c6a8a" stroke-width="1.2">
+    <rect x="40" y="352" width="130" height="72" rx="8"/>
+    <rect x="182" y="352" width="130" height="72" rx="8"/>
+    <rect x="324" y="352" width="130" height="72" rx="8"/>
+    <rect x="466" y="352" width="130" height="72" rx="8"/>
+    <rect x="608" y="352" width="130" height="72" rx="8"/>
+    <rect x="750" y="352" width="110" height="72" rx="8"/>
+  </g>
+  <g text-anchor="middle" fill="#1f2933" font-weight="600">
+    <text x="105" y="374">guard.py</text>
+    <text x="247" y="374">agent.py</text>
+    <text x="389" y="374">metadata.py</text>
+    <text x="531" y="374">store.py</text>
+    <text x="673" y="374">transcript.py</text>
+    <text x="805" y="374">tokens.py</text>
+  </g>
+  <g text-anchor="middle" fill="#5c6b7a" font-size="11">
+    <text x="105" y="394">check(sql)</text>
+    <text x="105" y="410">one read-only stmt</text>
+    <text x="247" y="394">propose() / analyze()</text>
+    <text x="247" y="410">+ llm_login.py</text>
+    <text x="389" y="394">read_schema()</text>
+    <text x="389" y="410">render_schema()</text>
+    <text x="531" y="394">settings · source</text>
+    <text x="531" y="410">audit log (SQLite)</text>
+    <text x="673" y="394">every LLM prompt</text>
+    <text x="673" y="410">JSONL + views</text>
+    <text x="805" y="394">HS256 JWT</text>
+    <text x="805" y="410">sessions</text>
+  </g>
+  <text x="450" y="458" text-anchor="middle" fill="#5c6b7a" font-size="12">also: config.py (Settings from env) · sources.py (connection strings → Source)</text>
+
+  <line x1="389" y1="440" x2="389" y2="480" stroke="#3b4a5a" stroke-width="1.5" marker-end="url(#arrow)"/>
+
+  <!-- layer 4: engines -->
+  <rect x="20" y="480" width="860" height="100" rx="10" fill="#edf7f2" stroke="#1baf7a" stroke-width="1.5"/>
+  <text x="34" y="502" font-size="12" font-weight="600" fill="#1baf7a">ENGINES · engines/</text>
+  <text x="450" y="524" text-anchor="middle" fill="#1f2933" font-weight="600">DirectEngine: catalog() · table_sizes() · execute() · test_login()</text>
+  <g text-anchor="middle" fill="#1f2933" font-size="12">
+    <text x="130" y="556">mysql</text>
+    <text x="270" y="556">postgres</text>
+    <text x="410" y="556">sqlserver</text>
+    <text x="550" y="556">sqlite</text>
+    <text x="690" y="556">duckdb</text>
+    <text x="810" y="556">ducklake</text>
+  </g>
+  <text x="450" y="574" text-anchor="middle" fill="#5c6b7a" font-size="11">one module per database kind, registered in engines/__init__.py</text>
+</svg>

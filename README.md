@@ -1,20 +1,33 @@
 # Escrowe
 
-![Escrowe architecture](docs/architecture.svg)
+![Escrowe overview](docs/01-overview.svg)
 
-Escrowe is a blind-agent query gateway: it connects an LLM agent directly to a real database account, hands it only the schema (table/column names, types, comments — never row values), and lets it write SQL that runs as that account.
+Escrowe lets an LLM agent write SQL against your database without ever
+seeing the data. It connects with a real database account, shows the agent
+that account's schema (table and column names, types, comments, never
+values), runs the SQL the agent writes as that account, and hands the rows
+to you. The rows do not go back to the agent.
 
-Escrowe adds no access control of its own. Whatever the connected database account can do, the agent can do — nothing more, nothing less. The one guarantee Escrowe provides structurally is that the agent never sees query result rows unless a human explicitly opts in.
+Escrowe adds no access control of its own. Whatever the connected account
+can do, the agent can do, and nothing more. The one thing Escrowe guarantees
+structurally is that query results never re-enter the agent's context unless
+a person explicitly feeds them back.
 
-## How it works
+## How a question is answered
 
-1. You connect a database account to Escrowe (`escrowe connect <dsn>`).
-2. Escrowe reads the schema once, from the database's own system catalog (e.g. `information_schema`) — it never runs a `SELECT` against your tables to do this, so no data value can leak into what the agent sees.
-3. You ask a question in natural language (`escrowe ask "..."`). The agent proposes SQL based on the schema alone.
-4. The proposed SQL is checked by a guard (single statement, no writes, no `SELECT ... INTO OUTFILE`, no stored procedures, no dangerous built-ins like `SLEEP`/`LOAD_FILE`) and then executed.
-5. Results go straight back to you — they do not re-enter the agent's context. The agent only gets to see shape information (row counts, null counts) via an optional "probe" query before finalizing its answer, or full data if you explicitly `\feed` a result back to it for follow-up analysis.
+1. You connect a database account: `escrowe connect mysql://user:pw@host/shop`.
+2. Escrowe reads the schema once, from the database's own system catalog.
+   No `SELECT` is ever run against your tables to do this.
+3. You ask a question. The agent proposes SQL from the schema alone.
+4. A guard checks the SQL: one statement, read-only for the agent, no file
+   writes, no stored procedures, no built-ins that read server files or
+   stall the connection. Nothing is rewritten.
+5. The query runs as your account. The rows come back to you. The agent may
+   first "probe": run a query and get back only its shape (row count, which
+   columns were all NULL) before finalizing.
 
-Every attempt — proposed SQL, compiled SQL, guard decision, row count, duration — is written to a local audit log.
+Every attempt is written to a local audit log, and every prompt sent to the
+LLM is written to a transcript you can inspect with `escrowe llm-log`.
 
 ## Install
 
@@ -22,75 +35,107 @@ Every attempt — proposed SQL, compiled SQL, guard decision, row count, duratio
 pip install -e .
 ```
 
-Requires Python ≥3.10.
+Python 3.10 or newer.
 
-## Usage
+## Use
 
-Guided setup (connect a database, connect Claude, start asking questions):
+Guided: connect a database, connect Claude, start asking.
 
 ```bash
 escrowe
 ```
 
-Scripted / machine use:
+The same in the browser, with notebooks and charts:
 
 ```bash
-escrowe connect mysql://user:pw@host:3306/shop --local
+escrowe -ui
+```
+
+Scripted:
+
+```bash
+escrowe connect mysql://user:pw@host:3306/shop
 escrowe ask "how many orders shipped last week?" --local
 escrowe sql "SELECT count(*) FROM orders" --local
+escrowe meta --local
 ```
 
-Run as a server for remote/multi-user access:
+The password is never saved. A later `--local` command asks for it once, or
+reads `ESCROWE_PASSWORD`.
+
+Inside the prompt: type a question, or `\sql <query>`, `\meta`, `\audit`,
+`\export <file>`, `\json`, `\feed <question>` (experimental: ask about the
+last result's own data), `\help`, `\q`.
+
+### As a server
 
 ```bash
-escrowe serve
+ESCROWE_API_ENABLED=1 escrowe serve
 ```
 
-then, from a client, `escrowe login` / `escrowe shell` for an interactive REPL, or use the Python client library:
+Then from another machine: `escrowe login`, `escrowe shell`, or Python:
 
 ```python
 import escrowe
-conn = escrowe.connect("escrowe://user:pass@host:port")
-result = conn.ask("...")
-result.rows       # or result.to_arrow()
+with escrowe.connect("escrowe://user:pw@host:8765") as conn:
+    result = conn.ask("revenue per region this quarter")
+    result.sql, result.rows, result.to_arrow()
 ```
 
-An HTTP API (FastAPI) is also available for programmatic access, but is disabled by default during the current beta — enable it with `ESCROWE_API_ENABLED=1`.
+Each login opens its own database connection as that person; sessions are
+bearer tokens and the password is dropped after the connection opens.
 
-## Database engines
+## Databases
 
-Engines are pluggable (`escrowe/engines/`). Built in:
+| Kind | Connection string | Driver |
+|---|---|---|
+| MySQL / MariaDB | `mysql://user:pw@host:3306/db` | PyMySQL |
+| PostgreSQL | `postgres://user:pw@host:5432/db` | psycopg |
+| SQL Server | `sqlserver://user:pw@host:1433/db` | pymssql |
+| SQLite | `sqlite:/path/to/file.sqlite` | stdlib |
+| DuckDB | `duckdb:/path/to/file.duckdb` | duckdb |
+| DuckLake | `ducklake:/catalog.duckdb`, `ducklake:quack:host:port?token=…` | duckdb |
 
-- **MySQL** (`mysql://...`, via PyMySQL)
-- **DuckLake** (via DuckDB as a DuckLake client, attaching to catalogs backed by SQLite, Postgres, MySQL, a local file, or a Quack server)
-
-Adding a new database kind means adding one module and registering it.
+Adding a kind is one module in `escrowe/engines/` plus a registry entry; see
+[CONTRIBUTING.md](CONTRIBUTING.md).
 
 ## Configuration
 
-Environment variables (see `escrowe/config.py`; also loaded from a `.env` file):
+Read from the environment, or a `.env` file in the working directory or in
+`~/.escrowe`.
 
 | Variable | Purpose |
 |---|---|
-| `ESCROWE_HOME` | Local data directory (default `~/.escrowe`) |
-| `ESCROWE_ATTACH` | Database attachment spec (`name=kind:spec;...`) |
-| `MYSQL_HOST` / `MYSQL_PORT` / `MYSQL_USER` / `MYSQL_PWD` / `MYSQL_DATABASE` | Standard MySQL client vars, auto-detected as an attachment |
-| `ESCROWE_JWT_SECRET` | JWT signing secret for server sessions |
-| `ESCROWE_LLM` | LLM provider: `auto` \| `anthropic` \| `claude-cli` \| `mock` |
+| `ESCROWE_HOME` | Where state lives (default `~/.escrowe`) |
+| `ESCROWE_LLM` | `auto` \| `anthropic` \| `claude-cli` \| `mock` |
 | `ESCROWE_MODEL` | Model name (default `claude-opus-5`) |
-| `ESCROWE_LLM_THINKING` | Extended-thinking budget (Anthropic only) |
-| `ESCROWE_MAX_ROWS` / `ESCROWE_QUERY_TIMEOUT` / `ESCROWE_AGENT_ATTEMPTS` | Query/agent limits |
+| `ESCROWE_LLM_THINKING` | Extended-thinking token budget (API-key provider only) |
+| `ESCROWE_MAX_ROWS`, `ESCROWE_QUERY_TIMEOUT`, `ESCROWE_AGENT_ATTEMPTS` | Query and agent limits |
+| `ESCROWE_API_ENABLED` | Allow `escrowe serve` |
+| `ESCROWE_JWT_SECRET` | Session signing secret (generated if unset) |
 | `ESCROWE_SERVER` | Default server URL for client commands |
-| `ESCROWE_API_ENABLED` | Enable the HTTP API (off by default) |
-| `ESCROWE_EPHEMERAL` | Throwaway home directory — nothing persisted to disk |
+| `ESCROWE_PASSWORD`, `ESCROWE_USER` | Credentials for scripted `--local` commands |
+| `ANTHROPIC_API_KEY` | Use the API instead of a Claude subscription |
+
+## Architecture
+
+[docs/ARCHITECTURE.md](docs/ARCHITECTURE.md) walks from the big picture down
+to what one question does, with diagrams at each level.
+
+## Security model
+
+Escrowe is not an authorization system. Connect an account scoped to exactly
+what you are willing to let the agent read; the database's grants decide the
+rest. What Escrowe adds is keeping data out of the agent's context: the agent
+gets enough schema and shape information to write useful SQL and nothing
+else. `tests/test_blind.py` and `tests/test_no_data_leaks.py` verify this.
 
 ## Development
 
 ```bash
 pip install -e ".[dev]"
-pytest
+pytest          # fake in-memory engine; live engines via docker/ (see docker/README.md)
+ruff check .
 ```
 
-## Security model
-
-Escrowe is not an authorization system. Access control is entirely delegated to the database account's own grants — connect an account scoped to exactly what you're willing to let the agent read. The value Escrowe adds is keeping raw data out of the agent's context by default, giving the agent enough schema and shape information to write useful SQL without ever seeing the data itself unless a human chooses to share it.
+MIT licensed.

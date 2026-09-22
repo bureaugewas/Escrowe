@@ -57,7 +57,7 @@ def test_operator_mode_queries_as_the_connected_account_without_login(svc):
     op = LocalConnection(svc, operator=True)
     assert op.ask("how many orders").rows == [[1370]]
     assert op.sql("SELECT count(*) AS n FROM customers").rows == [[3]]
-    assert [s["name"] for s in op.sources()["sources"]] == ["fake"]
+    assert op.source()["name"] == "fake"
 
 
 def test_a_plain_connection_with_no_login_and_no_operator_flag_cannot_query(svc):

@@ -1,40 +1,16 @@
-"""Three append-only records of everything escrowe sends to an LLM.
+"""An append-only record of every prompt escrowe sends to an LLM.
 
-escrowe claims the agent never sees your data. These files are how you check
-that claim rather than take it on faith: every call is written down at the
-moment it is sent, with the exact system prompt and the exact user message,
-not a reconstruction. If a value from your data ever reached a model, it
-would be in here.
+Escrowe claims the agent never sees your data. This file is how you check
+that claim: each call is written at the moment it is sent, with the exact
+system prompt and user message, not a reconstruction. If a value from your
+data ever reached a model, it would be in here.
 
-  llm-transcript.jsonl   One JSON object per line - the full record (system
-                         prompt, schema, SQL written, reply), for scripts
-                         and `escrowe llm-log`.
-  llm-context.log        The same calls as tab-separated rows:
-                         timestamp \t session_id \t who \t text
-                         where `who` is one of user / thought / agent, one
-                         row per physical line - meant to be tailed, grepped
-                         or opened in a spreadsheet, not parsed as JSON.
-                         `user` is the question itself, not the schema/system
-                         prompt that goes with it on every call (that's in
-                         llm-transcript.jsonl in full; repeating it here on
-                         every line would bury the actual question). `thought`
-                         rows are the model's extended-thinking text where
-                         the provider exposes it (the anthropic/API-key
-                         provider only - the Claude Code CLI subscription
-                         path has no way to surface it, so those rows are
-                         simply absent there). `agent` is the reply.
-  llm-questions.log      Just the questions people asked: tab-separated
-                         timestamp \t session_id \t question, nothing else -
-                         no schema, no SQL, no reply. The other two logs
-                         necessarily include table/column names (and, in the
-                         reply, the SQL the agent wrote against them), which
-                         some may consider sensitive on its own; this file
-                         is for when only "what did people ask" is wanted.
-                         One line per question, written once, not once per
-                         retry attempt.
+One JSONL file, one object per line. The reader functions below extract
+narrower views from it (just the questions, or a line-oriented context
+log) so nothing needs to be written twice.
 
-All three created readable only by you, because the schema, the column
-comments and the questions people ask are themselves worth protecting.
+The file is created readable only by you: the schema, the column comments
+and the questions people ask are worth protecting on their own.
 """
 
 from __future__ import annotations
@@ -45,19 +21,13 @@ import threading
 import time
 from pathlib import Path
 
-FILENAME = "llm-transcript.jsonl"
-CONTEXT_LOG_FILENAME = "llm-context.log"
-QUESTIONS_LOG_FILENAME = "llm-questions.log"
+MAX_BYTES = 64 * 1024 * 1024
 _lock = threading.Lock()
 
 
 class Transcript:
-    def __init__(self, path: Path | str, max_bytes: int = 64 * 1024 * 1024,
-                 context_log_path: Path | str | None = None, questions_log_path: Path | str | None = None):
+    def __init__(self, path: Path | str):
         self.path = Path(path)
-        self.context_log_path = Path(context_log_path) if context_log_path else self.path.with_name(CONTEXT_LOG_FILENAME)
-        self.questions_log_path = Path(questions_log_path) if questions_log_path else self.path.with_name(QUESTIONS_LOG_FILENAME)
-        self.max_bytes = max_bytes
         self.path.parent.mkdir(parents=True, exist_ok=True)
 
     def record(self, *, provider: str, model: str, system: str, user: str,
@@ -65,7 +35,7 @@ class Transcript:
                context: dict | None = None, thinking: str | None = None) -> None:
         context = context or {}
         entry = {
-            "ts": time.strftime("%Y-%m-%dT%H:%M:%S", time.gmtime()) + "Z",
+            "ts": time.strftime("%Y-%m-%dT%H:%M:%SZ", time.gmtime()),
             "provider": provider,
             "model": model,
             "user": context.get("user"),
@@ -79,107 +49,66 @@ class Transcript:
             "error": error,
             "sent_chars": len(system) + len(user),
         }
-        with _lock:
-            self._write_jsonl(entry)
-            self._write_context_log(entry)
-            self._write_questions_log(entry)
-
-    def _write_jsonl(self, entry: dict) -> None:
         line = json.dumps(entry, ensure_ascii=False, default=str)
-        self._rotate_if_large(self.path, ".jsonl.1")
-        newfile = not self.path.exists()
-        with self.path.open("a", encoding="utf-8") as f:
-            f.write(line + "\n")
-        if newfile:
-            self._lock_down(self.path)
+        with _lock:
+            self._rotate_if_large()
+            is_new = not self.path.exists()
+            with self.path.open("a", encoding="utf-8") as f:
+                f.write(line + "\n")
+            if is_new:
+                try:
+                    os.chmod(self.path, 0o600)
+                except OSError:
+                    pass
 
-    def _write_context_log(self, entry: dict) -> None:
-        """Tab-separated: timestamp, session id, who (user/thought/agent),
-        text - one row per physical line, so the file stays line-oriented
-        and greppable instead of one giant escaped blob per call.
-
-        `user` is the question itself, not the system prompt: the schema is
-        sent fresh on every call (see the catalog cache in service.py) and
-        would otherwise dominate this file with the same block repeated for
-        every question. It's still in llm-transcript.jsonl in full, for
-        whoever actually needs to see exactly what was sent."""
-        ts = entry["ts"]
-        sid = entry["session"] or "-"
-
-        def rows(who: str, text: str | None):
-            for ln in (text or "").splitlines() or [""]:
-                yield f"{ts}\t{sid}\t{who}\t{ln.replace(chr(9), '    ')}"   # keep columns intact
-
-        lines = []
-        if entry["question"]:
-            lines += list(rows("user", entry["question"]))
-        if entry["thinking"]:
-            lines += list(rows("thought", entry["thinking"]))
-        if entry["error"]:
-            lines += list(rows("agent", f"ERROR: {entry['error']}"))
-        else:
-            lines += list(rows("agent", entry["received"] or "(none)"))
-
-        self._rotate_if_large(self.context_log_path, ".log.1")
-        newfile = not self.context_log_path.exists()
-        with self.context_log_path.open("a", encoding="utf-8") as f:
-            f.write("\n".join(lines) + "\n")
-        if newfile:
-            self._lock_down(self.context_log_path)
-
-    def _write_questions_log(self, entry: dict) -> None:
-        """Just the question, once - not on retry attempts (attempt > 1 is
-        the same question again, with feedback from the failed try)."""
-        question = entry["question"]
-        if not question or (entry["attempt"] or 1) != 1:
-            return
-        line = f"{entry['ts']}\t{entry['session'] or '-'}\t{question.replace(chr(9), '    ')}"
-        self._rotate_if_large(self.questions_log_path, ".log.1")
-        newfile = not self.questions_log_path.exists()
-        with self.questions_log_path.open("a", encoding="utf-8") as f:
-            f.write(line + "\n")
-        if newfile:
-            self._lock_down(self.questions_log_path)
-
-    @staticmethod
-    def _lock_down(path: Path) -> None:
+    def _rotate_if_large(self) -> None:
         try:
-            os.chmod(path, 0o600)
-        except OSError:
-            pass
-
-    @staticmethod
-    def _rotate_if_large(path: Path, rotated_suffix: str) -> None:
-        try:
-            if path.exists() and path.stat().st_size > 64 * 1024 * 1024:
-                path.replace(path.with_suffix(rotated_suffix))
+            if self.path.exists() and self.path.stat().st_size > MAX_BYTES:
+                self.path.replace(self.path.with_suffix(".jsonl.1"))
         except OSError:
             pass
 
     def read(self, limit: int = 20) -> list[dict]:
-        """The most recent entries from the JSONL log, newest last."""
+        """The most recent entries, oldest first. limit=0 means all."""
         if not self.path.exists():
             return []
-        out = []
+        entries = []
         with self.path.open(encoding="utf-8") as f:
             for line in f:
                 line = line.strip()
-                if not line:
-                    continue
-                try:
-                    out.append(json.loads(line))
-                except json.JSONDecodeError:
-                    continue
-        return out[-limit:] if limit else out
+                if line:
+                    try:
+                        entries.append(json.loads(line))
+                    except json.JSONDecodeError:
+                        continue
+        return entries[-limit:] if limit else entries
 
 
-def default_path(home: Path | str) -> Path:
-    return Path(home) / FILENAME
+# ------------------------------------------------------------------ views
+
+def _cell(text: str | None) -> str:
+    return (text or "").replace("\t", "    ")
 
 
-def default_context_log_path(home: Path | str) -> Path:
-    return Path(home) / CONTEXT_LOG_FILENAME
+def questions(entries: list[dict]) -> list[str]:
+    """Just what people asked, once per question (retries share the question).
+    Tab-separated: timestamp, session, question."""
+    return [f"{e['ts']}\t{e.get('session') or '-'}\t{_cell(e['question'])}"
+            for e in entries if e.get("question") and (e.get("attempt") or 1) == 1]
 
 
-def default_questions_log_path(home: Path | str) -> Path:
-    return Path(home) / QUESTIONS_LOG_FILENAME
+def context_lines(entries: list[dict]) -> list[str]:
+    """The conversation as tab-separated rows: timestamp, session, who, text.
+    `who` is user (the question), thought (extended thinking, where the
+    provider exposes it) or agent (the reply). One row per line of text, so
+    the output can be grepped. The system prompt is left out; it repeats the
+    same schema on every call and is in the JSONL in full."""
+    out = []
+    for e in entries:
+        prefix = f"{e['ts']}\t{e.get('session') or '-'}"
+        parts = [("user", e.get("question")), ("thought", e.get("thinking")),
+                 ("agent", f"ERROR: {e['error']}" if e.get("error") else e.get("received") or "(none)")]
+        for who, text in parts:
+            if text:
+                out += [f"{prefix}\t{who}\t{_cell(line)}" for line in text.splitlines() or [""]]
+    return out

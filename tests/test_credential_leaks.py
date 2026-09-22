@@ -9,7 +9,7 @@ import json
 import pytest
 from fastapi.testclient import TestClient
 
-from escrowe.engines import KINDS, EngineError, build
+from escrowe.engines import EngineError, build, kinds
 from escrowe.server import create_app
 from escrowe.service import AuthError
 from escrowe.sources import SECRET_KEYS, Source
@@ -17,7 +17,7 @@ from escrowe.tokens import TokenError, issue, verify
 
 
 # --------------------------------------------------------------- sources.py
-@pytest.mark.parametrize("kind", KINDS)
+@pytest.mark.parametrize("kind", kinds())
 def test_persisted_json_never_contains_a_password_for_any_engine_kind(kind):
     src = Source("s", kind, {"password": "sekret999", "user": "u", "host": "h", "metadata": "m"})
     persisted = src.persisted_json()
@@ -58,7 +58,7 @@ def test_login_failure_message_never_contains_the_password(svc):
 
 # ---------------------------------------------------------------- server.py
 def test_server_health_never_exposes_a_raw_password(svc):
-    svc._source = Source("fake", "fake", {"user": "alice", "password": "SUPERSECRETPW99", "host": "h"})
+    svc.source = Source("fake", "fake", {"user": "alice", "password": "SUPERSECRETPW99", "host": "h"})
     client = TestClient(create_app(svc))
     r = client.get("/health")
     assert r.status_code == 200
@@ -67,7 +67,7 @@ def test_server_health_never_exposes_a_raw_password(svc):
 
 def test_server_sources_never_exposes_a_raw_password(svc):
     token = svc.login("bob", "bob")["token"]
-    svc._source = Source("fake", "fake", {"user": "alice", "password": "SUPERSECRETPW99", "host": "h"})
+    svc.source = Source("fake", "fake", {"user": "alice", "password": "SUPERSECRETPW99", "host": "h"})
     client = TestClient(create_app(svc))
     r = client.get("/sources", headers={"Authorization": f"Bearer {token}"})
     assert r.status_code == 200

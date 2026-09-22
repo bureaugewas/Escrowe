@@ -1,16 +1,15 @@
-"""The Escrowe service: connect to one database directly, and let a person or
-an agent query it as themselves. escrowe adds no access control of its own -
-the account you connect with is the entire access decision, exactly as it
-would be with any other client of that database.
+"""The core of escrowe. One `Escrowe` object holds the connected database,
+the agent, the audit store and the login sessions, and exposes two ways to
+query: `sql()` for SQL a person wrote, `ask()` for a question the agent
+turns into SQL.
 
-This is also the seam that enforces the blind guarantee: `ask()` hands the
-agent metadata and shape feedback only; the Arrow table from the engine goes
-straight back to the caller and never re-enters the agent loop.
+`ask()` is where the blind guarantee lives: the agent is handed the schema
+and shape feedback only; the Arrow table the engine returns goes straight
+back to the caller and never re-enters the agent loop.
 """
 
 from __future__ import annotations
 
-import json
 import secrets
 import threading
 import time
@@ -18,38 +17,41 @@ from dataclasses import dataclass, field
 
 import pyarrow as pa
 
+from . import llm_login
 from .agent import Agent, Attempt, HistoryTurn
-from .auth import AuthError as VerifyError, build_verifier
 from .config import Settings
-from .engines import REGISTRY, EngineError, build as build_engine
+from .engines import REGISTRY, DirectEngine, EngineError
+from .engines import build as build_engine
 from .guard import Denied, check
-from .metadata import Metadata, TableMeta
+from .metadata import TableMeta, read_schema, render_schema
 from .sources import Source
 from .store import Store
-from .transcript import Transcript, default_path
 from .tokens import TokenError, issue, verify
+from .transcript import Transcript
 
 
 class AuthError(Exception):
     pass
 
 
+NOT_CONNECTED = "No database connected. Run `escrowe connect <dsn>` first."
+
+
 @dataclass
 class Principal:
-    """Who is asking. There are no roles: `user` is the account the query
-    actually runs as, whether that's the one escrowe connected with at
-    startup or one a person logged in with of their own."""
+    """Who is asking. `user` is the database account the query runs as. A
+    principal without a session is the operator: the account escrowe itself
+    connected with, which is what the local CLI runs as."""
     user: str
-    token: str | None = None
     session: str | None = None
 
 
 @dataclass
 class Session:
-    """A login's own engine, connected as that person, closed when they log out."""
+    """A login's own engine, connected as that person, closed on logout."""
     id: str
     user: str
-    engine: object
+    engine: DirectEngine
     created: float = field(default_factory=time.time)
 
     def close(self) -> None:
@@ -61,7 +63,7 @@ class Session:
 
 @dataclass
 class Answer:
-    """The agent answered in words, from the schema. No query ran, so no data moved."""
+    """The agent replied in words, from the schema. No query ran."""
     text: str
     question: str
     audit_id: int
@@ -77,164 +79,155 @@ class Answer:
 @dataclass
 class QueryResult:
     table: pa.Table
-    sql: str                 # the SQL the user (or agent) wrote, unchanged
+    sql: str                 # exactly what was run
     duration_ms: float
     audit_id: int
     attempts: int = 1
     provider: str | None = None
-    note: str | None = None  # a short caveat the agent added after finalizing this query
 
     def to_dict(self, max_rows: int | None = None) -> dict:
         t = self.table if max_rows is None else self.table.slice(0, max_rows)
-        return {
-            "decision": "allowed", "sql": self.sql, "columns": self.table.column_names,
-            "rows": [list(r.values()) for r in t.to_pylist()], "row_count": self.table.num_rows,
-            "duration_ms": round(self.duration_ms, 1), "audit_id": self.audit_id,
-            "attempts": self.attempts, "provider": self.provider, "note": self.note,
-        }
+        return {"decision": "allowed", "sql": self.sql, "columns": self.table.column_names,
+                "rows": [list(r.values()) for r in t.to_pylist()], "row_count": self.table.num_rows,
+                "duration_ms": round(self.duration_ms, 1), "audit_id": self.audit_id,
+                "attempts": self.attempts, "provider": self.provider}
+
+
+def login_error_message(e: Exception) -> str:
+    """Never hand a caller the raw driver error: it names hosts and databases."""
+    text = str(e).lower()
+    if any(w in text for w in ("can't connect", "connection", "refused", "timeout")):
+        return "The database is not reachable, so the login could not be checked."
+    return "Invalid user or password."
+
+
+def shape_feedback(table: pa.Table) -> str:
+    """What a probe gets back: counts only, never values."""
+    n = table.num_rows
+    if n == 0:
+        return "0 rows returned."
+    nulls = [f"{name}: {table.column(name).null_count}/{n} null"
+             for name in table.column_names if table.column(name).null_count]
+    return f"{n} row(s) returned." + (" Null counts - " + ", ".join(nulls) + "." if nulls else "")
 
 
 class Escrowe:
+    HISTORY_MAX_TURNS = 20
+
     def __init__(self, settings: Settings, store: Store | None = None, agent: Agent | None = None):
         self.settings = settings
         self.store = store or Store(settings.store_path)
         self.secret = self.store.jwt_secret(settings.jwt_secret)
-        self._source: Source | None = self._load_source()
-        # A source loaded from disk never carries a password (see
-        # Source.persisted_json), so it's known but not yet connected until
-        # login() supplies one - that's what makes the machine two-command
-        # flow work without ever writing a password to disk. A kind with no
-        # per-account identity of its own (DuckLake) has no password to wait
-        # for, so it connects immediately.
-        connectable = self._source is not None and (
-            self._source.params.get("password") is not None
-            or not REGISTRY[self._source.kind].requires_credentials)
-        # The catalog (table/column names, types, comments, row-count estimates)
-        # is read once, right here, and never again: it is the only thing the
-        # agent is ever shown, and the queries that produce it are fixed
-        # (see engines/*.py catalog()/table_sizes()) and out of the agent's
-        # reach - nothing it writes can trigger another catalog read.
-        self._catalog_cache: dict[int, list[TableMeta]] = {}
-        try:
-            self.engine = self._connect(self._source) if connectable else None
-        except EngineError:
-            # A credential-less kind (e.g. DuckLake) that needed a secret not kept on
-            # disk - a token, same reasoning as a password - degrades to "not yet
-            # connected" instead of crashing the whole process on startup; \database
-            # or a fresh `escrowe connect` supplies it again, same as a lost password.
-            self.engine = None
-        # A fixed-length id for the log, even when nobody logged in: the local
-        # CLI's operator mode has no JWT session, but every exchange still
-        # needs one consistent id to group it in the transcript.
-        self._operator_session_id = secrets.token_hex(8)
-        from . import llm_login
-        self.transcript = Transcript(default_path(settings.home))
-        self.agent = agent or Agent(settings.llm_provider, settings.llm_model,
-                                    api_key=llm_login.stored_api_key(self.store), store=self.store,
-                                    transcript=self.transcript, thinking_budget=settings.llm_thinking_budget)
-        if agent is not None and getattr(agent, "transcript", None) is None:
-            agent.transcript = self.transcript
+        self.transcript = Transcript(settings.transcript_path)
+        self.agent = agent or self._build_agent()
+        if self.agent.transcript is None:
+            self.agent.transcript = self.transcript
+
+        self.source: Source | None = None
+        self.engine: DirectEngine | None = None
+        # The schema is read once per engine, when it connects, and cached here
+        # keyed by engine identity. Nothing the agent writes can trigger another
+        # catalog read.
+        self._schemas: dict[int, list[TableMeta]] = {}
         self.sessions: dict[str, Session] = {}
         self._session_lock = threading.Lock()
-        # Per-session conversation memory: earlier questions, their SQL, and their
-        # shape (never rows, unless \feed explicitly shared one - see ask()).
-        # Keyed by session id so a server process with several logins keeps each
-        # person's history separate.
+        # Per-session memory of earlier questions: SQL and shape, never rows
+        # (unless the person ran \feed). The operator's own session id groups
+        # the local CLI's questions when nobody logged in.
         self._history: dict[str, list[HistoryTurn]] = {}
+        self._operator_session_id = secrets.token_hex(8)
 
-    def _load_source(self) -> Source | None:
-        rows = self.store.sources()
-        if rows:
-            r = rows[0]
-            return Source(r["name"], r["kind"], json.loads(r["params"]))
-        if self.settings.attachments:
-            return Source.from_attachment(self.settings.attachments[0])
-        return None
+        self._restore_saved_source()
 
-    # Params an older escrowe (with the since-removed escrowe/passthrough/direct
-    # modes) may have written to a store this process is now reopening.
-    _LEGACY_PARAMS = ("dsn", "mode")
+    # -------------------------------------------------------------- setup
 
-    def _connect(self, src: Source, credentials: tuple[str, str] | None = None):
-        p = {k: v for k, v in src.params.items() if k not in self._LEGACY_PARAMS}
-        if credentials is not None:
-            p["user"], p["password"] = credentials
-        engine = build_engine(src.kind, **p)
-        self._catalog_cache[id(engine)] = Metadata(engine).all_tables()   # read once, here only
-        return engine
-
-    # -------------------------------------------------------------- source
-    def source(self) -> Source | None:
-        return self._source
-
-    def sources(self) -> list[Source]:
-        """Kept plural for callers written against the old multi-source shape;
-        escrowe connects to exactly one database at a time."""
-        return [self._source] if self._source else []
-
-    def set_source(self, src: Source, persist: bool = True) -> dict:
-        """Connect to a database, replacing whatever was configured before."""
-        engine = self._connect(src)               # fail before touching current state; snapshots the catalog once
-        if self.engine is not None:
-            self._catalog_cache.pop(id(self.engine), None)
-            self.engine.close()
-        self.engine = engine
-        self._source = src
-        self.store.clear_sources()
-        if persist:
-            self.store.save_source(src.name, src.kind, src.persisted_json())
-        self._history.clear()          # a different database makes old SQL/shape history stale
-        tables = sorted({t.fqn for t in self._catalog_cache[id(engine)]})
-        return {"name": src.name, "kind": src.kind, "tables": tables}
-
-    # kept as an alias: cli/client code was written against add_source/remove_source
-    add_source = set_source
-
-    def remove_source(self, name: str) -> None:
-        if self._source and self._source.name == name:
-            if self.engine is not None:
-                self._catalog_cache.pop(id(self.engine), None)
-                self.engine.close()
-            self.engine, self._source = None, None
-            self._history.clear()
-        self.store.delete_source(name)
-
-    # ------------------------------------------------------------- identity
-    def login(self, user: str, password: str) -> dict:
-        """Verify the person against the connected database, open their own
-        connection, forget the password. Not needed for the common single-user
-        case, where escrowe already connected with the setup credentials."""
-        if self._source is None:
-            raise AuthError("No database connected yet.")
-        try:
-            identity = build_verifier(self._source).verify(user, password)
-        except VerifyError as e:
-            raise AuthError(str(e))
-        engine = self._connect(self._source, credentials=(user, password))
-        password = None                                     # nothing keeps a copy
-        token = issue(self.secret, {"sub": identity.user}, self.settings.token_ttl_s)
-        sid = verify(self.secret, token)["jti"]
-        with self._session_lock:
-            self._reap_sessions()
-            self.sessions[sid] = Session(sid, identity.user, engine)
-        return {"token": token, "sub": identity.user}
+    def _build_agent(self) -> Agent:
+        s = self.settings
+        return Agent(s.llm_provider, s.llm_model, api_key=llm_login.stored_api_key(self.store),
+                     store=self.store, transcript=self.transcript, thinking_budget=s.llm_thinking_budget)
 
     def reload_agent(self) -> None:
         """After connecting Claude, pick the new credential up without a restart."""
-        from . import llm_login
-        self.agent = Agent(self.settings.llm_provider, self.settings.llm_model,
-                           api_key=llm_login.stored_api_key(self.store), store=self.store,
-                           transcript=self.transcript, thinking_budget=self.settings.llm_thinking_budget)
+        self.agent = self._build_agent()
+
+    def _restore_saved_source(self) -> None:
+        """A source saved by `escrowe connect` carries no password (see
+        Source.persisted_json). It is known but not connected until login()
+        supplies one, unless its kind needs no credentials at all."""
+        rows = self.store.sources()
+        if not rows:
+            return
+        self.source = Source.from_row(rows[0]["name"], rows[0]["kind"], rows[0]["params"])
+        if self.source.kind not in REGISTRY:
+            return
+        if REGISTRY[self.source.kind].requires_credentials and "password" not in self.source.params:
+            return
+        try:
+            self.engine = self._connect(self.source)
+        except EngineError:
+            self.engine = None     # e.g. a DuckLake token that was not kept on disk
+
+    def _connect(self, src: Source, credentials: tuple[str, str] | None = None) -> DirectEngine:
+        params = dict(src.params)
+        if credentials is not None:
+            params["user"], params["password"] = credentials
+        engine = build_engine(src.kind, **params)
+        self._schemas[id(engine)] = read_schema(engine)   # the one and only catalog read
+        return engine
+
+    def _close_engine(self) -> None:
+        if self.engine is not None:
+            self._schemas.pop(id(self.engine), None)
+            self.engine.close()
+        self.engine = None
+        self._history.clear()
+
+    def set_source(self, src: Source, persist: bool = True) -> dict:
+        """Connect to a database, replacing whatever was connected before.
+        Fails before touching current state if the new one cannot connect."""
+        engine = self._connect(src)
+        self._close_engine()
+        self.engine, self.source = engine, src
+        if persist:
+            self.store.save_source(src.name, src.kind, src.persisted_json())
+        else:
+            self.store.clear_sources()
+        return {"name": src.name, "kind": src.kind, "tables": [t.fqn for t in self._schemas[id(engine)]]}
+
+    def remove_source(self) -> None:
+        self._close_engine()
+        self.source = None
+        self.store.clear_sources()
+
+    # ------------------------------------------------------------ identity
+
+    def login(self, user: str, password: str) -> dict:
+        """Prove who someone is by opening a real connection as them, keep that
+        connection as their session, and forget the password."""
+        if self.source is None:
+            raise AuthError("No database connected yet.")
+        try:
+            REGISTRY[self.source.kind].test_login(**{**self.source.params, "user": user, "password": password})
+        except EngineError as e:
+            raise AuthError(login_error_message(e))
+        engine = self._connect(self.source, credentials=(user, password))
+        del password
+        token = issue(self.secret, {"sub": user.lower()}, self.settings.token_ttl_s)
+        session_id = verify(self.secret, token)["jti"]
+        with self._session_lock:
+            self._reap_sessions()
+            self.sessions[session_id] = Session(session_id, user.lower(), engine)
+        return {"token": token, "sub": user.lower()}
 
     def logout(self, token: str) -> None:
         try:
-            sid = verify(self.secret, token).get("jti")
+            session_id = verify(self.secret, token).get("jti")
         except TokenError:
             return
         with self._session_lock:
-            s = self.sessions.pop(sid, None)
-        if s:
-            s.close()
+            session = self.sessions.pop(session_id, None)
+        if session:
+            session.close()
 
     def _reap_sessions(self) -> None:
         cutoff = time.time() - self.settings.token_ttl_s
@@ -246,190 +239,149 @@ class Escrowe:
             claims = verify(self.secret, token)
         except TokenError as e:
             raise AuthError(str(e))
-        return Principal(user=claims["sub"], token=token, session=claims.get("jti"))
+        return Principal(user=claims["sub"], session=claims.get("jti"))
 
     def operator_principal(self) -> Principal:
-        """The account escrowe itself connected with at startup - what the
-        local CLI queries as when nobody has logged in separately."""
-        user = (self._source.params.get("user") if self._source else None) or "local"
-        return Principal(user=user)
+        return Principal(user=(self.source.user if self.source else None) or "local")
 
-    def engine_for(self, principal: Principal):
-        """A principal with no session at all is the local CLI's own operator
-        mode (never logged in separately) - that's the main engine, correctly.
-        A principal that DOES carry a session id but it's gone from
-        self.sessions means a real login token whose session was revoked
-        (/logout) or reaped (expired) - that must fail, not silently fall
-        back to the main engine, which would run the request as a different,
-        possibly more privileged, identity than the one that was logged out."""
+    def engine_for(self, principal: Principal) -> DirectEngine | None:
+        """The operator (no session) uses the main engine. A principal whose
+        session is gone (logged out, expired, or never issued) must fail, not
+        fall back to the main engine, which may be a more privileged account."""
         if principal.session is None:
             return self.engine
-        s = self.sessions.get(principal.session)
-        if s is None:
+        session = self.sessions.get(principal.session)
+        if session is None:
             raise AuthError("Session has ended; log in again.")
-        return s.engine
+        return session.engine
 
-    def catalog_for(self, principal: Principal) -> list[TableMeta] | None:
-        """The schema snapshot taken once when this principal's engine was
-        connected (see `_connect`) - never re-queried, so nothing an agent
-        writes can ever trigger another catalog read."""
+    def schema_for(self, principal: Principal) -> list[TableMeta] | None:
+        """The schema snapshot taken when this principal's engine connected."""
         engine = self.engine_for(principal)
-        return self._catalog_cache.get(id(engine)) if engine is not None else None
+        return self._schemas.get(id(engine)) if engine is not None else None
 
-    # -------------------------------------------------------------- queries
-    def sql(self, principal: Principal, sql: str, mode: str = "sql", question: str | None = None,
+    # ------------------------------------------------------------- queries
+
+    def sql(self, principal: Principal, sql: str, *, mode: str = "sql", question: str | None = None,
             attempts: int = 1, provider: str | None = None, allow_write: bool = True) -> QueryResult:
-        """`allow_write` defaults to true because this is the path a person uses.
-        `ask()` sets it false, so no agent-written statement can change anything."""
-        start = time.time()
+        """Run SQL as this principal. `allow_write` is true for a person's own
+        SQL; ask() passes false so nothing the agent writes can change data."""
+        started = time.time()
         engine = self.engine_for(principal)
         if engine is None:
-            raise EngineError("No database connected. Run `escrowe connect ...` first.")
+            raise EngineError(NOT_CONNECTED)
+
+        def audit(decision: str, reason: str | None, rows: int | None, safe_sql: str | None) -> int:
+            return self.store.audit(user=principal.user, mode=mode, question=question, candidate_sql=sql,
+                                    compiled_sql=safe_sql, decision=decision, reason=reason, row_count=rows,
+                                    duration_ms=round((time.time() - started) * 1000, 1), attempts=attempts)
+
         try:
-            safe_sql = check(sql, allow_write=allow_write,
-                             dialect=self._source.kind if self._source else "mysql")
+            safe_sql = check(sql, allow_write=allow_write, dialect=self.source.kind if self.source else None)
         except Denied as e:
-            self._audit(principal, mode, question, sql, None, "denied", str(e), None, start, attempts)
+            audit("denied", str(e), None, None)
             raise
         try:
             table = engine.execute(safe_sql, self.settings.query_timeout_s)
-            if self.settings.max_rows is not None and table.num_rows > self.settings.max_rows:
-                table = table.slice(0, self.settings.max_rows)
         except EngineError as e:
-            self._audit(principal, mode, question, sql, safe_sql, "error", str(e), None, start, attempts)
+            audit("error", str(e), None, safe_sql)
             raise
-        except Exception as e:
-            msg = _clean_engine_error(e)
-            self._audit(principal, mode, question, sql, safe_sql, "error", msg, None, start, attempts)
-            raise EngineError(msg)
-        dur = (time.time() - start) * 1000
-        aid = self._audit(principal, mode, question, sql, safe_sql, "allowed", None, table.num_rows, start, attempts)
-        return QueryResult(table, sql, dur, aid, attempts, provider)
-
-    HISTORY_MAX_TURNS = 20
-
-    def _remember(self, session_id: str, turn: HistoryTurn) -> None:
-        h = self._history.setdefault(session_id, [])
-        h.append(turn)
-        del h[:-self.HISTORY_MAX_TURNS]
+        if self.settings.max_rows is not None and table.num_rows > self.settings.max_rows:
+            table = table.slice(0, self.settings.max_rows)
+        audit_id = audit("allowed", None, table.num_rows, safe_sql)
+        return QueryResult(table, sql, (time.time() - started) * 1000, audit_id, attempts, provider)
 
     def ask(self, principal: Principal, question: str, on_status=None,
-            feed_data: str | None = None, on_token=None) -> QueryResult:
-        """Text -> agent -> SQL -> engine -> rows to the caller.
-        The agent sees the schema, shape feedback, and this session's own history
-        (earlier questions/SQL/shape - never rows); it never sees `result.table` -
-        unless `feed_data` is given (the experimental \\feed mode, warned about at the
-        prompt), in which case this skips straight to Agent.analyze: a follow-up
-        question about a result already in hand, answered from that data alone, no
-        schema, no new query. A \\feed turn's shared data is remembered from then on
-        too - the one deliberate, person-approved exception to shape-only memory.
-        `on_status`, if given, is called with "thinking" while the agent is composing
-        a query and "running the query" once one is about to execute."""
+            feed_data: str | None = None, on_token=None) -> QueryResult | Answer:
+        """Question -> agent -> SQL -> engine -> rows to the caller.
+
+        The agent sees the schema, shape feedback and this session's history;
+        it never sees the returned table. `on_status` is called with a short
+        phrase as the phases change; `on_token` with reply text as it streams.
+        With `feed_data`, the question is about a result already in hand
+        (\\feed): no schema, no new query, and the fed text is remembered in
+        this session's history from then on.
+        """
         question = question.strip()
         session_id = principal.session or self._operator_session_id
         history = self._history.get(session_id, [])
-        if feed_data is None:
-            # An exact repeat of an earlier question in this session: replay what it
-            # already produced, instantly - no new query, no agent call. Without this,
-            # the agent sees the repeat in CONVERSATION SO FAR and (reasonably) answers
-            # in prose that it's already been asked, instead of just showing the result
-            # again, which is what a person re-running a question actually wants.
-            for turn in reversed(history):
-                if turn.question == question and turn.result is not None:
-                    return turn.result
+        context = {"user": principal.user, "session": session_id}
+
         if feed_data is not None:
-            if on_status:
-                on_status("thinking")
-            proposal = self.agent.analyze(question, feed_data,
-                                          context={"user": principal.user, "session": session_id},
-                                          history=history, on_token=on_token)
-            aid = self.store.audit(user=principal.user, mode="feed", question=question,
-                                   decision="answered" if proposal.answer else "refused",
-                                   reason=(proposal.answer or proposal.refusal or "")[:500], attempts=1)
-            if not proposal.answer:
-                refusal = Denied(proposal.refusal or "The agent could not answer from the fed data.")
-                refusal.needs_login = proposal.needs_login
-                raise refusal
-            ans = Answer(proposal.answer, question, aid, proposal.provider, 1)
-            self._remember(session_id, HistoryTurn(question=question, fed=feed_data, result=ans))
-            return ans
-        tables = self.catalog_for(principal)
+            return self._ask_about_fed_data(principal, question, feed_data, history, context, on_status, on_token)
+
+        # An exact repeat of an earlier question replays its result: no agent
+        # call, no new query. That is what re-running a question means.
+        for turn in reversed(history):
+            if turn.question == question and turn.result is not None:
+                return turn.result
+
+        tables = self.schema_for(principal)
         if tables is None:
-            raise EngineError("No database connected. Run `escrowe connect ...` first.")
-        schema_text = Metadata.render(tables)
+            raise EngineError(NOT_CONNECTED)
+        schema_text = render_schema(tables)
         attempts: list[Attempt] = []
         last_error: Exception | None = None
         for n in range(1, self.settings.agent_attempts + 1):
             if on_status:
                 on_status("thinking")
-            # A probe's reply is just SQL, never meant for the person to read - it's the
-            # agent checking its own work before finalizing (see agent.py's SYSTEM prompt).
-            # Buffer this turn's tokens instead of streaming them live, so a probe's raw
-            # `-- probe\nSELECT ...` text never appears as if it were the answer; only
-            # replay them once we know this turn is the one actually being returned.
-            buf: list[str] = []
-            proposal = self.agent.propose(question, schema_text, attempts,
-                                          context={"user": principal.user, "session": session_id},
-                                          history=history,
-                                          on_token=(buf.append if on_token else None))
+            # A probe's reply is SQL meant for the agent, not the person, so
+            # buffer this turn's tokens and only replay them if the turn is
+            # the one actually returned.
+            buffer: list[str] = []
+            proposal = self.agent.propose(question, schema_text, attempts, context=context, history=history,
+                                          on_token=buffer.append if on_token else None)
             if proposal.answer:
-                if on_token:
-                    for tok in buf:
-                        on_token(tok)
-                aid = self.store.audit(user=principal.user, mode="ask", question=question,
-                                       decision="answered", reason=proposal.answer[:500], attempts=n)
-                ans = Answer(proposal.answer, question, aid, proposal.provider, n)
-                self._remember(session_id, HistoryTurn(question=question,
-                                                       shape=f"answered: {proposal.answer[:300]}", result=ans))
-                return ans
+                for token in buffer if on_token else ():
+                    on_token(token)
+                audit_id = self.store.audit(user=principal.user, mode="ask", question=question,
+                                            decision="answered", reason=proposal.answer[:500], attempts=n)
+                answer = Answer(proposal.answer, question, audit_id, proposal.provider, n)
+                self._remember(session_id, HistoryTurn(question, shape=f"answered: {proposal.answer[:300]}",
+                                                       result=answer))
+                return answer
             if not proposal.sql:
                 self.store.audit(user=principal.user, mode="ask", question=question,
                                  decision="refused", reason=proposal.refusal, attempts=n)
-                refusal = Denied(proposal.refusal or "The agent could not produce a query.")
-                refusal.needs_login = proposal.needs_login
-                raise refusal
+                raise self._refusal(proposal.refusal or "The agent could not produce a query.", proposal.needs_login)
             if on_status:
                 on_status("running the query")
             try:
                 result = self.sql(principal, proposal.sql, mode="probe" if proposal.probe else "ask",
-                                  question=question, attempts=n,
-                                  provider=proposal.provider, allow_write=False)
+                                  question=question, attempts=n, provider=proposal.provider, allow_write=False)
             except (Denied, EngineError) as e:
                 last_error = e
-                attempts.append(Attempt(proposal.sql, feedback=str(e)))   # shape feedback only
+                attempts.append(Attempt(proposal.sql, feedback=str(e)))
                 continue
             if proposal.probe and n < self.settings.agent_attempts:
-                # The agent asked to check this one before trusting it: it gets the shape
-                # (row count, which columns came back all-NULL), never the rows, and one
-                # more turn to decide whether to finalize, refine, or probe again.
-                attempts.append(Attempt(proposal.sql, feedback=_shape_feedback(result.table)))
+                attempts.append(Attempt(proposal.sql, feedback=shape_feedback(result.table)))
                 continue
-            result.note = proposal.note
-            self._remember(session_id, HistoryTurn(question=question, sql=result.sql,
-                                                   shape=_shape_feedback(result.table), result=result))
+            self._remember(session_id, HistoryTurn(question, sql=result.sql,
+                                                   shape=shape_feedback(result.table), result=result))
             return result
         raise Denied(f"No acceptable query after {self.settings.agent_attempts} attempts. Last: {last_error}")
 
-    def _audit(self, p: Principal, mode, question, sql, compiled_sql, decision, reason, rows, start, attempts) -> int:
-        return self.store.audit(user=p.user, mode=mode, question=question, candidate_sql=sql,
-                                compiled_sql=compiled_sql, decision=decision, reason=reason, row_count=rows,
-                                duration_ms=round((time.time() - start) * 1000, 1), attempts=attempts)
+    def _ask_about_fed_data(self, principal, question, feed_data, history, context, on_status, on_token) -> Answer:
+        if on_status:
+            on_status("thinking")
+        proposal = self.agent.analyze(question, feed_data, context=context, history=history, on_token=on_token)
+        audit_id = self.store.audit(user=principal.user, mode="feed", question=question,
+                                    decision="answered" if proposal.answer else "refused",
+                                    reason=(proposal.answer or proposal.refusal or "")[:500], attempts=1)
+        if not proposal.answer:
+            raise self._refusal(proposal.refusal or "The agent could not answer from the fed data.",
+                                proposal.needs_login)
+        answer = Answer(proposal.answer, question, audit_id, proposal.provider, 1)
+        self._remember(context["session"], HistoryTurn(question, fed=feed_data, result=answer))
+        return answer
 
+    @staticmethod
+    def _refusal(reason: str, needs_login: bool) -> Denied:
+        refusal = Denied(reason)
+        refusal.needs_login = needs_login
+        return refusal
 
-def _clean_engine_error(e: Exception) -> str:
-    msg = str(e).split("\n")[0]
-    return msg[:300]
-
-
-def _shape_feedback(table: pa.Table) -> str:
-    """Counts only, never values - what a probe gets back. Free: Arrow already
-    knows null_count per column from the rows it just fetched, no extra query."""
-    n = table.num_rows
-    if n == 0:
-        return "0 rows returned."
-    nulls = [f"{name}: {table.column(name).null_count}/{n} null"
-            for name in table.column_names if table.column(name).null_count]
-    text = f"{n} row(s) returned."
-    if nulls:
-        text += " Null counts - " + ", ".join(nulls) + "."
-    return text
+    def _remember(self, session_id: str, turn: HistoryTurn) -> None:
+        turns = self._history.setdefault(session_id, [])
+        turns.append(turn)
+        del turns[:-self.HISTORY_MAX_TURNS]

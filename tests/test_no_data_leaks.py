@@ -2,22 +2,22 @@
 (numbers, dates, strings, NULLs, odd column names) must never reach the
 agent; per-session history must never carry rows; the exact-repeat replay in
 Escrowe.ask() must never re-invoke the agent and must be scoped per session;
-probe/_shape_feedback must never carry a value, even a unique-looking one;
+probe/shape_feedback must never carry a value, even a unique-looking one;
 and the transcript log must hold to the same guarantee."""
 
 from __future__ import annotations
 
-import pytest
 import duckdb
+import pytest
+from test_blind import RecordingAgent
 
 from escrowe.agent import Agent
-from escrowe.config import Attachment, Settings
+from escrowe.config import Settings
 from escrowe.engines import REGISTRY
 from escrowe.engines.base import Column, DirectEngine, EngineError
-from escrowe.service import Escrowe, _shape_feedback
+from escrowe.service import Escrowe, shape_feedback
+from escrowe.sources import Source
 from escrowe.store import Store
-
-from test_blind import RecordingAgent
 
 # Values of every ordinary type, plus a NULL and a column name with spaces -
 # none of these strings/numbers should ever be findable in a prompt.
@@ -42,10 +42,6 @@ class WeirdEngine(DirectEngine):
             "INSERT INTO secrets VALUES "
             "(1, 'UNIQUE_SECRET_STRING_42', 3.14159, DATE '2024-01-01', NULL), "
             "(2, 'another-value!!', -7.0, DATE '1999-12-31', 'not null here')")
-
-    @classmethod
-    def test_login(cls, **params) -> None:
-        cls(**params).close()
 
     def close(self) -> None:
         try:
@@ -74,9 +70,10 @@ REGISTRY.setdefault("weird", WeirdEngine)
 
 @pytest.fixture
 def wsvc(tmp_path):
-    settings = Settings(home=tmp_path, jwt_secret="test-secret",
-                        attachments=[Attachment("w", "weird", "x=1")], llm_provider="mock")
-    return Escrowe(settings, store=Store(tmp_path / "cat.sqlite"), agent=Agent("mock"))
+    settings = Settings(home=tmp_path, jwt_secret="test-secret", llm_provider="mock")
+    svc = Escrowe(settings, store=Store(tmp_path / "cat.sqlite"), agent=Agent("mock"))
+    svc.set_source(Source("w", "weird", {}), persist=False)
+    return svc
 
 
 @pytest.fixture
@@ -145,18 +142,18 @@ def test_exact_repeat_replay_is_scoped_per_session(wsvc):
     assert len(wsvc.agent.seen) == 2
 
 
-def test_probe_shape_feedback_never_reveals_a_value_even_when_unique():
+def test_probeshape_feedback_never_reveals_a_value_even_when_unique():
     import pyarrow as pa
     table = pa.table({"val": ["UNIQUE_SECRET_STRING_42", None]})
-    fb = _shape_feedback(table)
+    fb = shape_feedback(table)
     assert "UNIQUE_SECRET_STRING_42" not in fb
     assert "val: 1/2 null" in fb
 
 
-def test_probe_shape_feedback_on_empty_result():
+def test_probeshape_feedback_on_empty_result():
     import pyarrow as pa
     table = pa.table({"val": pa.array([], type=pa.string())})
-    assert _shape_feedback(table) == "0 rows returned."
+    assert shape_feedback(table) == "0 rows returned."
 
 
 def test_transcript_never_logs_a_row_value(wsvc, op):
@@ -164,8 +161,8 @@ def test_transcript_never_logs_a_row_value(wsvc, op):
     wsvc.agent.transcript = wsvc.transcript
     wsvc.ask(op, "show me everything")
 
-    from escrowe.transcript import Transcript, default_path
-    entries = Transcript(default_path(wsvc.settings.home)).read()
+    from escrowe.transcript import Transcript
+    entries = Transcript(wsvc.settings.transcript_path).read()
     blob = "\n".join(e["sent"]["system"] + e["sent"]["user"] + (e["received"] or "") for e in entries)
     for v in LEAKY_VALUES:
         assert v not in blob

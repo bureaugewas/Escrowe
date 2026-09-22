@@ -30,12 +30,11 @@ pytestmark = pytest.mark.skipif(not _reachable(), reason="no live SQL Server to 
 
 @pytest.fixture
 def direct_svc(tmp_path):
-    from escrowe.config import load_settings
+    from escrowe.config import Settings
     from escrowe.service import Escrowe
     from escrowe.sources import Source
 
-    settings = load_settings(ephemeral=True)
-    settings.home = tmp_path
+    settings = Settings(home=tmp_path, llm_provider="mock")
     svc = Escrowe(settings)
     svc.set_source(Source("clientdb", "sqlserver", {
         "host": HOST, "port": PORT, "user": USER, "password": PASSWORD,
@@ -71,6 +70,6 @@ def test_direct_mode_still_blocks_writes_for_the_agent(direct_svc):
 
 
 def test_direct_catalog_reads_real_sqlserver_tables(direct_svc):
-    from escrowe.metadata import Metadata
-    text = Metadata.render(Metadata(direct_svc.engine).all_tables())
+    from escrowe.metadata import read_schema, render_schema
+    text = render_schema(read_schema(direct_svc.engine))
     assert "customers" in text

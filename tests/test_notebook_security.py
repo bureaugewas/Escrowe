@@ -1,13 +1,15 @@
 """The /notebooks endpoints: a saved cell's keys are whitelisted (clean_cells
-/ _CELL_KEYS), and a notebook name can never escape the notebooks directory
-(_NOTEBOOK_NAME)."""
+/ CELL_KEYS), and a notebook name can never escape the notebooks directory
+(NOTEBOOK_NAME)."""
 
 from __future__ import annotations
 
 import pytest
 from fastapi.testclient import TestClient
 
-from escrowe.server import _CELL_KEYS, _NOTEBOOK_NAME, create_app
+from escrowe.notebooks import CELL_KEYS
+from escrowe.notebooks import NAME as NOTEBOOK_NAME
+from escrowe.server import create_app
 
 
 @pytest.fixture
@@ -29,7 +31,7 @@ def test_put_notebook_strips_smuggled_keys_from_the_saved_file(svc, client_heade
     assert "__proto__" not in saved
 
     cell = client.get("/notebooks/mynb", headers=headers).json()["cells"][0]
-    assert set(cell) <= set(_CELL_KEYS)
+    assert set(cell) <= set(CELL_KEYS)
     assert "password" not in cell and "arbitrary_key" not in cell
 
 
@@ -65,7 +67,7 @@ def test_put_notebook_rejects_non_string_text_and_title(svc, client_headers):
     "../../etc/passwd", "..%2f..%2fetc", "/etc/passwd", "a/b", "..", "...", "~root",
 ])
 def test_notebook_name_regex_forbids_path_separators_and_traversal(name):
-    assert not _NOTEBOOK_NAME.match(name)
+    assert not NOTEBOOK_NAME.match(name)
 
 
 @pytest.mark.parametrize("name", [

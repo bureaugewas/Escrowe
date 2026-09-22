@@ -5,19 +5,25 @@ build-backend = "setuptools.build_meta"
 [project]
 name = "escrowe"
 version = "0.1.0"
-description = "A blind-agent query gateway: connect an LLM to your database directly, with a real account, so it can write SQL against your schema and never see a row of the data."
+description = "A blind-agent query gateway: an LLM writes SQL against your schema, as a real database account, and never sees a row of the data."
 readme = "README.md"
 requires-python = ">=3.10"
 license = {text = "MIT"}
+authors = [{name = "Jurjen van Genugten"}]
+keywords = ["llm", "sql", "database", "agent", "privacy", "text-to-sql"]
+classifiers = [
+  "Development Status :: 3 - Alpha",
+  "Environment :: Console",
+  "Intended Audience :: Developers",
+  "License :: OSI Approved :: MIT License",
+  "Programming Language :: Python :: 3",
+  "Topic :: Database",
+]
+# Pinned exactly. The guard in escrowe/guard.py depends on sqlglot parsing
+# every dialect's statement shapes as expected, so a version bump is a
+# deliberate step: bump, run the suite, then commit. CI runs pip-audit weekly
+# so a CVE disclosed against a pin is still caught.
 dependencies = [
-  # Pinned exactly, not >=: the whole security boundary in guard.py depends on
-  # sqlglot parsing every dialect's statement shapes exactly as expected (see
-  # its own comments - two real bugs this session came from trusting a
-  # library's parsing behavior without re-checking it after a change). A
-  # version bump here should be its own deliberate step - install the new
-  # version, run `pytest tests/test_guard.py tests/test_session_security.py`
-  # (and the rest of the suite) before moving the pin, not something that
-  # happens silently via a routine `pip install --upgrade`.
   "sqlglot==30.18.0",
   "pyarrow==25.0.1",
   "fastapi==0.141.1",
@@ -28,13 +34,17 @@ dependencies = [
   "rich==15.0.0",
   "anthropic==1.7.0",
   "pymysql==1.2.3",
-  "psycopg[binary]==3.3.6", # engines/postgres.py
-  "pymssql==2.4.1",         # engines/sqlserver.py: pure-C TDS client, no ODBC driver needed
-  "duckdb==1.5.5",          # engines/ducklake.py: DuckDB is DuckLake's own client library
+  "psycopg[binary]==3.3.6",
+  "pymssql==2.4.1",
+  "duckdb==1.5.5",
 ]
 
 [project.optional-dependencies]
-dev = ["pytest==9.1.1", "pip-audit==2.10.1"]
+dev = ["pytest==9.1.1", "pip-audit==2.10.1", "ruff==0.16.8"]
+
+[project.urls]
+Homepage = "https://github.com/bureaugewas/Escrowe"
+Issues = "https://github.com/bureaugewas/Escrowe/issues"
 
 [project.scripts]
 escrowe = "escrowe.cli:app"
@@ -47,3 +57,11 @@ escrowe = ["static/*"]
 
 [tool.pytest.ini_options]
 testpaths = ["tests"]
+
+[tool.ruff]
+line-length = 120
+target-version = "py310"
+
+[tool.ruff.lint]
+select = ["E", "F", "W", "I", "B", "UP"]
+ignore = ["B008", "B904"]   # B008: typer.Option() defaults; B904: `raise X(str(e))` is deliberate

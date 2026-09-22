@@ -3,7 +3,6 @@ DuckDB extension to be downloadable (it isn't in every sandbox - extension
 downloads can be blocked by network policy), so these are skipped rather
 than faked when it can't load."""
 
-import shutil
 
 import pytest
 
@@ -26,7 +25,7 @@ pytestmark = pytest.mark.skipif(not _ducklake_available(),
 
 @pytest.fixture
 def lake_svc(tmp_path):
-    from escrowe.config import load_settings
+    from escrowe.config import Settings
     from escrowe.service import Escrowe
     from escrowe.sources import Source
 
@@ -42,8 +41,7 @@ def lake_svc(tmp_path):
     con.execute("COMMENT ON TABLE lake.customers IS 'Customer master data'")
     con.close()
 
-    settings = load_settings(ephemeral=True)
-    settings.home = tmp_path
+    settings = Settings(home=tmp_path, llm_provider="mock")
     svc = Escrowe(settings)
     svc.set_source(Source("lake", "ducklake", {"metadata": str(catalog)}), persist=False)
     return svc
@@ -56,8 +54,8 @@ def test_ducklake_connects_with_no_login_step(lake_svc):
 
 
 def test_ducklake_catalog_reads_the_real_catalog(lake_svc):
-    from escrowe.metadata import Metadata
-    text = Metadata.render(Metadata(lake_svc.engine).all_tables())
+    from escrowe.metadata import read_schema, render_schema
+    text = render_schema(read_schema(lake_svc.engine))
     assert "customers" in text and "Customer master data" in text
 
 

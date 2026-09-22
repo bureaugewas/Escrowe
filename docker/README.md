@@ -6,7 +6,7 @@ exercising escrowe's direct engines end to end (`tests/test_mysql_direct.py`,
 with the same sample schema: `customers` and `orders` tables, an FK between
 them, mixed column types (int, varchar, date, timestamp, decimal, boolean),
 and a comment on `customers` (and `customers.tier`) where the engine supports
-column/table comments. SQLite needs no container - see below.
+column/table comments. SQLite needs no container, see below.
 
 ## Bring it up
 
@@ -49,16 +49,16 @@ enforces a password complexity policy on `SA_PASSWORD`/`MSSQL_SA_PASSWORD`
 
 ## SQLite
 
-No container - it's a plain file. Generate it with:
+No container: it is a plain file. `tests/test_sqlite_direct.py` generates its
+own copy in a temp directory, so nothing needs to be run first. To get a
+sample file to play with:
 
 ```sh
-python docker/seed_sqlite.py
+python docker/seed_sqlite.py            # writes docker/sample.sqlite (git-ignored)
+escrowe connect sqlite:docker/sample.sqlite
 ```
 
-This writes `docker/sample.sqlite` with the same `customers`/`orders` schema
-and data (SQLite has no real column/table comment support, so escrowe's
-`SQLiteEngine.catalog()` always returns `comment=None` for it - never
-fabricated).
+SQLite has no table or column comments, so the schema the agent sees has none.
 
 ## Tearing down
 

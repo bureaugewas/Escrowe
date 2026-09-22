@@ -1,8 +1,9 @@
-"""One engine per database kind escrowe can connect to directly. Add a new
-database system by adding one module here (subclassing DirectEngine) and
-registering it below - nothing elsewhere needs to change."""
+"""One engine per database kind. To add a kind: write a module here that
+subclasses DirectEngine (or DBAPIEngine) and add it to REGISTRY."""
 
-from .base import Column, DirectEngine, EngineError
+from __future__ import annotations
+
+from .base import Column, DBAPIEngine, DirectEngine, EngineError
 from .ducklake import DuckDBEngine, DuckLakeEngine
 from .mysql import MySQLEngine
 from .postgres import PostgresEngine
@@ -13,18 +14,14 @@ REGISTRY: dict[str, type[DirectEngine]] = {
     "mysql": MySQLEngine,
     "postgres": PostgresEngine,
     "sqlserver": SQLServerEngine,
-    "ducklake": DuckLakeEngine,
-    "duckdb": DuckDBEngine,
     "sqlite": SQLiteEngine,
+    "duckdb": DuckDBEngine,
+    "ducklake": DuckLakeEngine,
 }
 
 
-def __getattr__(name):
-    # KINDS reads REGISTRY live (PEP 562), so a kind registered after import
-    # (tests do this) is still recognized instead of a frozen import-time snapshot.
-    if name == "KINDS":
-        return tuple(REGISTRY)
-    raise AttributeError(name)
+def kinds() -> tuple[str, ...]:
+    return tuple(REGISTRY)
 
 
 def build(kind: str, **params) -> DirectEngine:
@@ -35,4 +32,4 @@ def build(kind: str, **params) -> DirectEngine:
     return cls(**params)
 
 
-__all__ = ["Column", "DirectEngine", "EngineError", "REGISTRY", "KINDS", "build"]
+__all__ = ["Column", "DBAPIEngine", "DirectEngine", "EngineError", "REGISTRY", "build", "kinds"]

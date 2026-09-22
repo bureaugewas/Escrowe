@@ -1,15 +1,19 @@
-"""Creates docker/sample.sqlite with the same sample schema/data used by the
-MySQL/Postgres/SQL Server containers (see docker/init/*.sql) - no container
-needed for SQLite, it's just a file. Run: python docker/seed_sqlite.py"""
+"""Create a SQLite file with the same sample schema and data as the MySQL,
+Postgres and SQL Server containers (docker/init/*.sql). No container is
+needed for SQLite; tests/test_sqlite_direct.py calls seed() itself.
+
+    python docker/seed_sqlite.py [path]     default: docker/sample.sqlite
+"""
 
 from __future__ import annotations
 
 import datetime
 import random
 import sqlite3
+import sys
 from pathlib import Path
 
-DB_PATH = Path(__file__).parent / "sample.sqlite"
+DEFAULT_PATH = Path(__file__).parent / "sample.sqlite"
 
 CUSTOMERS = [
     ("Acme Corp", "gold", "2021-03-01", 1),
@@ -23,23 +27,21 @@ CUSTOMERS = [
     ("Stark Industries", "gold", "2018-12-01", 1),
     ("Wayne Enterprises", "gold", "2017-07-04", 1),
 ]
-
 REGIONS = ["US", "EU", "APAC", "LATAM"]
 
 
-def main() -> None:
-    DB_PATH.unlink(missing_ok=True)
-    conn = sqlite3.connect(DB_PATH)
-    conn.execute("""
+def seed(path: Path | str = DEFAULT_PATH) -> Path:
+    path = Path(path)
+    path.unlink(missing_ok=True)
+    conn = sqlite3.connect(path)
+    conn.executescript("""
         CREATE TABLE customers (
           id INTEGER PRIMARY KEY AUTOINCREMENT,
           name TEXT NOT NULL,
           tier TEXT NOT NULL,
           signup_date DATE NOT NULL,
           is_active BOOLEAN NOT NULL DEFAULT 1
-        )
-    """)
-    conn.execute("""
+        );
         CREATE TABLE orders (
           id INTEGER PRIMARY KEY AUTOINCREMENT,
           customer_id INTEGER NOT NULL REFERENCES customers(id),
@@ -47,26 +49,24 @@ def main() -> None:
           amount DECIMAL(10,2) NOT NULL,
           placed_at TIMESTAMP NOT NULL,
           is_paid BOOLEAN NOT NULL DEFAULT 0
-        )
+        );
     """)
-    conn.executemany(
-        "INSERT INTO customers (name, tier, signup_date, is_active) VALUES (?, ?, ?, ?)",
-        CUSTOMERS)
+    conn.executemany("INSERT INTO customers (name, tier, signup_date, is_active) VALUES (?, ?, ?, ?)", CUSTOMERS)
 
     rng = random.Random(42)
     base = datetime.date(2023, 1, 1)
-    rows = []
-    for cid in range(1, len(CUSTOMERS) + 1):
-        for n in range(1, 7):
-            rows.append((cid, REGIONS[n % 4], round(10 + rng.random() * 990, 2),
-                        str(base + datetime.timedelta(days=n)), 0 if n % 3 == 0 else 1))
+    orders = [
+        (cid, REGIONS[n % 4], round(10 + rng.random() * 990, 2),
+         str(base + datetime.timedelta(days=n)), 0 if n % 3 == 0 else 1)
+        for cid in range(1, len(CUSTOMERS) + 1) for n in range(1, 7)
+    ]
     conn.executemany(
-        "INSERT INTO orders (customer_id, region, amount, placed_at, is_paid) VALUES (?, ?, ?, ?, ?)",
-        rows)
+        "INSERT INTO orders (customer_id, region, amount, placed_at, is_paid) VALUES (?, ?, ?, ?, ?)", orders)
     conn.commit()
     conn.close()
-    print(f"wrote {DB_PATH} ({len(CUSTOMERS)} customers, {len(rows)} orders)")
+    return path
 
 
 if __name__ == "__main__":
-    main()
+    out = seed(sys.argv[1] if len(sys.argv) > 1 else DEFAULT_PATH)
+    print(f"wrote {out} ({len(CUSTOMERS)} customers)")
