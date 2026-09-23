@@ -33,6 +33,7 @@ dependencies = [
   "typer==0.27.2",
   "rich==15.0.0",
   "anthropic==1.7.0",
+  "openai==3.19.0",
   "pymysql==1.2.3",
   "psycopg[binary]==3.3.6",
   "pymssql==2.4.1",

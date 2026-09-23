@@ -8,14 +8,18 @@ service.py, not an instruction in the prompt.
 
 Providers:
   anthropic   the Anthropic SDK with an API key (billed per token)
-  claude-cli  the Claude Code CLI (`claude -p`), reusing its subscription login
+  openai      the OpenAI SDK with an API key (billed per token)
+  claude-cli  the Claude Code CLI (`claude -p`), reusing its browser login
+  codex-cli   the Codex CLI (`codex exec`), reusing its ChatGPT browser login
   mock        a deterministic stand-in for tests and offline demos
+
+A CLI provider is given no model: it answers with whatever that CLI is set to,
+which is the account holder's own choice, not escrowe's.
 """
 
 from __future__ import annotations
 
 import json
-import os
 import re
 import subprocess
 import time
@@ -76,6 +80,7 @@ FEED_SYSTEM = ("You are answering a follow-up question about a database query re
 HISTORY_MAX_TURNS = 20
 HISTORY_MAX_CHARS = 6000
 CLI_TIMEOUT_S = 180
+PROVIDERS = ("anthropic", "openai", "claude-cli", "codex-cli", "mock")
 
 
 @dataclass
@@ -179,54 +184,52 @@ _WORD = re.compile(r"\S+\s*")
 
 
 def _reveal(text: str, on_token, delay_s: float = 0.008) -> None:
-    """`claude -p` returns its whole reply at once; reveal it word by word so
-    it reads like streaming."""
+    """A CLI provider returns its whole reply at once; reveal it word by word
+    so it reads like streaming."""
     for m in _WORD.finditer(text):
         on_token(m.group())
         time.sleep(delay_s)
 
 
-def _cli_error(message: str, binary: str) -> tuple[str, bool]:
+def _cli_error(message: str, v: llm_login.Vendor) -> tuple[str, bool]:
     """(message for the person, is it a login problem)"""
     low = message.lower()
-    if any(w in low for w in ("oauth", "authenticate", "expired", "unauthor")):
-        return "your Claude subscription login has expired.", True
+    binary = llm_login.binary(v)
+    if any(w in low for w in ("oauth", "authenticate", "expired", "unauthor", "not logged in")):
+        return f"your {v.label} login has expired.", True
     if "rate limit" in low or "429" in low:
-        return "Claude is rate limited right now. Wait a moment and ask again.", False
+        return f"{v.label} is rate limited right now. Wait a moment and ask again.", False
     if any(w in low for w in ("credit", "billing", "quota")):
-        return ("Claude Code is out of credit. It is signed in to an account that bills "
-                "API credits rather than using a Claude subscription."), True
+        return (f"{v.cli_label} is out of credit. It is signed in to an account that bills "
+                f"API credits rather than using a {v.label} subscription."), True
     if message:
         return f"`{binary}` failed: {message[:180]}", False
-    return f"`{binary}` failed without a message. Run `claude` once to check it works.", False
+    return f"`{binary}` failed without a message. Run `{binary}` once to check it works.", False
 
 
 class Agent:
-    def __init__(self, provider: str = "auto", model: str = "claude-opus-5",
+    def __init__(self, provider: str = "auto", model: str | None = None,
                  api_key: str | None = None, store=None, transcript=None, thinking_budget: int = 0):
-        self.model = model
-        self.api_key = api_key
         self.store = store
         self.transcript = transcript          # every prompt is written here as it is sent
-        self.provider = self._resolve(provider)
-        # Extended thinking is only available through the API-key provider;
-        # the Claude Code CLI has no flag that exposes it.
+        self.provider = provider if provider in PROVIDERS else llm_login.status(store)["provider"]
+        self.vendor = llm_login.for_provider(self.provider)
+        by_key = self.vendor is not None and self.provider == self.vendor.api_provider
+        # Only an API provider has a model and a key of escrowe's choosing. A
+        # CLI answers with whatever it is set to, so the transcript claims no
+        # model for it rather than one escrowe never asked for.
+        self.model = model or (self.vendor.model if by_key else "")
+        self.api_key = api_key or (llm_login.stored_api_key(store, self.vendor.name) if by_key else None)
+        # Extended thinking is only available through the API-key providers;
+        # neither CLI has a flag that exposes it.
         self.thinking_budget = thinking_budget
         self._client = None
         self.last_error: str | None = None
         self.last_thinking: str | None = None
         self.needs_login = False
 
-    def _resolve(self, preference: str) -> str:
-        if preference in ("anthropic", "claude-cli", "mock"):
-            return preference
-        if self.api_key:
-            return "anthropic"
-        return {"subscription": "claude-cli", "api_key": "anthropic", "none": "mock"}[
-            llm_login.status(self.store)["source"]]
-
     def status(self) -> dict:
-        return {"provider": self.provider, "model": self.model, **llm_login.status(self.store)}
+        return {**llm_login.status(self.store), "provider": self.provider, "model": self.model}
 
     # public entry points --------------------------------------------------
 
@@ -298,8 +301,12 @@ class Agent:
         try:
             if self.provider == "anthropic":
                 return self._ask_anthropic(system, user, on_token)
+            if self.provider == "openai":
+                return self._ask_openai(system, user, on_token)
             if self.provider == "claude-cli":
-                return self._ask_cli(system + "\n\n" + user, on_token)
+                return self._ask_claude_cli(system + "\n\n" + user, on_token)
+            if self.provider == "codex-cli":
+                return self._ask_codex_cli(system + "\n\n" + user, on_token)
             return self._ask_mock(system, user, on_token)
         except Exception as e:                       # a provider failure is not a crash
             self.last_error = f"{type(e).__name__}: {str(e).splitlines()[0][:200]}"
@@ -336,16 +343,50 @@ class Agent:
             return json.dumps({"refusal": "The model declined to answer this question."})
         return text
 
-    def _ask_cli(self, prompt: str, on_token=None) -> str | None:
-        binary = os.environ.get("CLAUDE_BIN", "claude")
+    def _ask_openai(self, system: str, user: str, on_token=None) -> str | None:
+        import openai
+        if self._client is None:
+            self._client = openai.OpenAI(api_key=self.api_key) if self.api_key else openai.OpenAI()
+        # No cache_control: the Responses API caches a repeated prefix by itself.
+        kwargs = dict(model=self.model, instructions=system, input=user, max_output_tokens=4096)
+        if self.thinking_budget > 0:
+            # OpenAI asks for an effort level, not a token budget, so any budget
+            # at all means "think harder"; the budget only widens the room for it.
+            kwargs["reasoning"] = {"effort": "high"}
+            kwargs["max_output_tokens"] = max(4096, self.thinking_budget + 1024)
+        if on_token is None:
+            text = self._client.responses.create(**kwargs).output_text
+        else:
+            parts = []
+            for event in self._client.responses.create(stream=True, **kwargs):
+                if event.type == "response.output_text.delta":
+                    parts.append(event.delta)
+                    on_token(event.delta)
+            text = "".join(parts)
+        return text or json.dumps({"refusal": "The model returned nothing."})
+
+    def _run_cli(self, argv: list[str], stdin: str | None = None) -> subprocess.CompletedProcess | None:
         try:
-            proc = subprocess.run([binary, "-p", prompt, "--output-format", "json"],
-                                  capture_output=True, text=True, timeout=CLI_TIMEOUT_S)
+            return subprocess.run(argv, input=stdin, capture_output=True, text=True, timeout=CLI_TIMEOUT_S)
         except FileNotFoundError:
-            self.last_error = f"'{binary}' is not installed."
-            return None
+            self.last_error = f"'{argv[0]}' is not installed."
         except subprocess.TimeoutExpired:
-            self.last_error = f"'{binary}' did not answer within {CLI_TIMEOUT_S}s."
+            self.last_error = f"'{argv[0]}' did not answer within {CLI_TIMEOUT_S}s."
+        return None
+
+    def _cli_failed(self, proc: subprocess.CompletedProcess) -> None:
+        detail = (proc.stderr or proc.stdout or "").strip().splitlines()
+        self.last_error, self.needs_login = _cli_error(detail[-1] if detail else "", self.vendor)
+
+    def _revealed(self, text: str | None, on_token) -> str | None:
+        if on_token and text:
+            _reveal(text, on_token)
+        return text
+
+    def _ask_claude_cli(self, prompt: str, on_token=None) -> str | None:
+        binary = llm_login.binary(self.vendor)
+        proc = self._run_cli([binary, "-p", prompt, "--output-format", "json"])
+        if proc is None:
             return None
         try:
             payload = json.loads(proc.stdout)
@@ -353,19 +394,28 @@ class Agent:
             payload = None
         # Claude Code reports failures inside its JSON; read that before the exit code.
         if payload is not None and (payload.get("is_error") or proc.returncode != 0):
-            self.last_error, self.needs_login = _cli_error(str(payload.get("result") or "").strip(), binary)
+            self.last_error, self.needs_login = _cli_error(str(payload.get("result") or "").strip(), self.vendor)
             return None
         if proc.returncode != 0:
-            detail = (proc.stderr or proc.stdout or "").strip().splitlines()
-            self.last_error, self.needs_login = _cli_error(detail[-1] if detail else "", binary)
+            self._cli_failed(proc)
             return None
         if payload is None:
             self.last_error = f"'{binary}' returned output that is not JSON."
             return None
-        result = payload.get("result")
-        if on_token and result:
-            _reveal(result, on_token)
-        return result
+        return self._revealed(payload.get("result"), on_token)
+
+    def _ask_codex_cli(self, prompt: str, on_token=None) -> str | None:
+        """`codex exec -` takes the prompt on stdin, streams its progress to
+        stderr and prints only the final message. The sandbox is read-only:
+        escrowe wants a reply, never a tool run."""
+        proc = self._run_cli([llm_login.binary(self.vendor), "exec", "-", "--sandbox", "read-only",
+                              "--skip-git-repo-check", "--color", "never"], stdin=prompt)
+        if proc is None:
+            return None
+        if proc.returncode != 0:
+            self._cli_failed(proc)
+            return None
+        return self._revealed(proc.stdout.strip(), on_token)
 
     def _ask_mock(self, system: str, user: str, on_token=None) -> str | None:
         """Offline stand-in: count a table, or describe the schema when asked about it."""

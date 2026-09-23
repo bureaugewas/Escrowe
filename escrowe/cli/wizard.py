@@ -1,6 +1,6 @@
-"""Interactive setup: the questions that connect a database and connect
-Claude. Used by the guided `escrowe` command and by `escrowe connect` when
-no connection string is given."""
+"""Interactive setup: the questions that connect a database and connect an
+LLM. Used by the guided `escrowe` command and by `escrowe connect` when no
+connection string is given."""
 
 from __future__ import annotations
 
@@ -15,8 +15,6 @@ from ..engines import kinds
 from .console import console, status
 
 DEFAULT_PORTS = {"mysql": 3306, "postgres": 5432, "sqlserver": 1433}
-LLM_CHOSEN = "llm_provider"          # store key: what the person picked
-LLM_METHOD = "llm_method"            # store key: browser | api_key
 
 
 def prompt_choice(text: str, choices: list[str], default: str) -> str:
@@ -140,14 +138,15 @@ def login_saved_connection(conn: LocalConnection) -> bool:
     return False
 
 
-# --------------------------------------------------------------- claude
+# ------------------------------------------------------------------ llm
 
-def ensure_claude(svc, interactive: bool = True, force: bool = False, quiet: bool = False) -> bool:
+def ensure_llm(svc, interactive: bool = True, force: bool = False, quiet: bool = False,
+               vendor: str | None = None) -> bool:
     """Settle the LLM. Asks unless the person already chose and it still works.
     A credential that happens to exist is not the same as being told to use
     it (it may be the wrong account), so the first run always asks."""
-    chosen = svc.store.setting(LLM_CHOSEN)
-    st = llm_login.status(svc.store)
+    chosen = vendor or llm_login.chosen_vendor(svc.store)
+    st = llm_login.status(svc.store, chosen)
     if chosen and st["connected"] and not force:
         if not interactive:
             if not quiet:
@@ -155,65 +154,71 @@ def ensure_claude(svc, interactive: bool = True, force: bool = False, quiet: boo
             return True
         if typer.confirm(f"Keep using {llm_login.describe(st)}?", default=True):
             return True
-        llm_login.forget_api_key(svc.store)
-        svc.store.set_setting(LLM_CHOSEN, "")
+        llm_login.forget_api_key(svc.store, llm_login.vendor(chosen))
+        svc.store.set_setting(llm_login.VENDOR_SETTING, "")
         svc.reload_agent()
-        return _choose_llm(svc)
     if not interactive:
         console.print("[yellow]No LLM is connected, so questions will not work.[/] "
-                      "Run [bold]escrowe claude login[/] on a terminal to connect one.")
+                      "Run [bold]escrowe llm login[/] on a terminal to connect one.")
         return False
-    return _choose_llm(svc)
+    return _choose_llm(svc, vendor)
 
 
-def _choose_llm(svc) -> bool:
-    console.print("\n[bold]Which LLM should escrowe use?[/]")
-    console.print("  1. Claude")
-    console.print("  2. Not now - only \\sql will work")
-    if typer.prompt("Which", default="1").strip() == "2":
-        console.print("[yellow]Skipped.[/] Run [bold]escrowe claude login[/] when you want to connect one.")
-        return False
-    svc.store.set_setting(LLM_CHOSEN, "claude")
-    console.print("\n[bold]How should escrowe connect to Claude?[/]")
-    console.print("  1. Browser login - signs in to your Anthropic account")
+def _choose_llm(svc, vendor: str | None = None) -> bool:
+    """`vendor` skips the first question: `escrowe chatgpt login` already answered it."""
+    if vendor is None:
+        names = list(llm_login.VENDORS)
+        console.print("\n[bold]Which LLM should escrowe use?[/]")
+        for i, name in enumerate(names, 1):
+            console.print(f"  {i}. {llm_login.VENDORS[name].label}")
+        console.print(f"  {len(names) + 1}. Not now - only \\sql will work")
+        pick = typer.prompt("Which", default="1").strip()
+        if pick not in [str(i) for i in range(1, len(names) + 1)]:
+            console.print("[yellow]Skipped.[/] Run [bold]escrowe llm login[/] when you want to connect one.")
+            return False
+        vendor = names[int(pick) - 1]
+    v = llm_login.vendor(vendor)
+    svc.store.set_setting(llm_login.VENDOR_SETTING, v.name)
+    console.print(f"\n[bold]How should escrowe connect to {v.label}?[/]")
+    console.print(f"  1. Browser login - signs in to your {v.label} account through {v.cli_label}")
     console.print("  2. API key - billed per token")
     method = "api_key" if typer.prompt("Which", default="1").strip() == "2" else "browser"
-    svc.store.set_setting(LLM_METHOD, method)
-    return _connect_api_key(svc) if method == "api_key" else _connect_subscription(svc)
+    svc.store.set_setting(llm_login.METHOD_SETTING, method)
+    return _connect_api_key(svc, v) if method == "api_key" else _connect_browser(svc, v)
 
 
-def _connect_subscription(svc) -> bool:
+def _connect_browser(svc, v) -> bool:
     """Always performs the login: being signed in already may be the wrong account."""
     def ask(cmd) -> bool:
-        console.print(f"  Claude Code signs you in. It is not installed yet:\n  [dim]$ {' '.join(cmd)}[/]")
+        console.print(f"  {v.cli_label} signs you in. It is not installed yet:\n  [dim]$ {' '.join(cmd)}[/]")
         return typer.confirm("  Install it now?", default=True)
 
     try:
-        if not llm_login.ensure_claude_code(ask):
-            console.print(f"[yellow]Skipped.[/] {llm_login.INSTALL_HINT}")
+        if not llm_login.ensure_cli(v, ask):
+            console.print(f"[yellow]Skipped.[/] {llm_login.install_hint(v)}")
             return False
         console.print("  opening your browser to sign in…")
-        llm_login.subscription_login()
+        llm_login.browser_login(v)
     except RuntimeError as e:
         console.print(f"[red]{e}[/]")
         return False
     svc.reload_agent()
-    console.print("[green]Signed in.[/] escrowe will ask Claude through that account.")
+    console.print(f"[green]Signed in.[/] escrowe will ask {v.label} through that account.")
     return True
 
 
-def _connect_api_key(svc) -> bool:
-    key = typer.prompt("  API key", hide_input=True, default="", show_default=False).strip()
+def _connect_api_key(svc, v) -> bool:
+    key = typer.prompt(f"  {v.label} API key", hide_input=True, default="", show_default=False).strip()
     if not key:
         return False
     with status("checking the key"):
-        ok, why = llm_login.check_api_key(key)
+        ok, why = llm_login.check_api_key(v, key)
     if not ok:
         console.print(f"[red]That key was not accepted:[/] {why}")
         return False
-    llm_login.save_api_key(svc.store, key)
+    llm_login.save_api_key(svc.store, v, key)
     svc.reload_agent()
-    console.print(f"[green]Claude connected with an API key.[/] [dim]stored in {svc.store.path}, "
+    console.print(f"[green]{v.label} connected with an API key.[/] [dim]stored in {svc.store.path}, "
                   "readable only by you[/]")
     return True
 

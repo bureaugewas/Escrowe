@@ -7,7 +7,6 @@ import os
 from dataclasses import dataclass
 from pathlib import Path
 
-DEFAULT_MODEL = "claude-opus-5"
 DEFAULT_SERVER_URL = "http://127.0.0.1:8765"
 
 
@@ -15,9 +14,9 @@ DEFAULT_SERVER_URL = "http://127.0.0.1:8765"
 class Settings:
     home: Path
     jwt_secret: str | None = None
-    llm_provider: str = "auto"            # auto | anthropic | claude-cli | mock
-    llm_model: str = DEFAULT_MODEL
-    llm_thinking_budget: int = 0          # >0 requests extended thinking (anthropic provider only)
+    llm_provider: str = "auto"            # auto, or one of agent.PROVIDERS
+    llm_model: str | None = None          # None: the chosen vendor's own default
+    llm_thinking_budget: int = 0          # >0 requests extended thinking (API-key providers only)
     max_rows: int = 1000
     query_timeout_s: float = 30.0
     agent_attempts: int = 3
@@ -72,7 +71,7 @@ def load_settings() -> Settings:
         home=home,
         jwt_secret=env("ESCROWE_JWT_SECRET"),
         llm_provider=env("ESCROWE_LLM", "auto"),
-        llm_model=env("ESCROWE_MODEL", DEFAULT_MODEL),
+        llm_model=env("ESCROWE_MODEL"),
         llm_thinking_budget=int(env("ESCROWE_LLM_THINKING", "0")),
         max_rows=int(env("ESCROWE_MAX_ROWS", "1000")),
         query_timeout_s=float(env("ESCROWE_QUERY_TIMEOUT", "30")),

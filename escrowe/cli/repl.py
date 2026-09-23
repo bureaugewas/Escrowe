@@ -71,7 +71,7 @@ def run(conn, idle_minutes: float = IDLE_MINUTES, prompt: str | None = None) -> 
         except EscroweDenied as e:
             console.print(f"[red]DENIED[/] {e}")
             if e.needs_login and wizard.is_tty() and hasattr(conn, "svc"):
-                if wizard.ensure_claude(conn.svc, force=True):
+                if wizard.ensure_llm(conn.svc, force=True):
                     console.print("[dim]ask again[/]")
         except EscroweAuthError as e:
             console.print(f"[red]AUTH[/] {e}")

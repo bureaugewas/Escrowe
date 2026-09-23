@@ -54,7 +54,7 @@ see [CONTRIBUTING.md](CONTRIBUTING.md).
 
 ## Use
 
-Guided: connect a database, connect Claude, start asking.
+Guided: connect a database, connect an LLM, start asking.
 
 ```bash
 escrowe
@@ -77,6 +77,28 @@ escrowe meta --local
 
 The password is never saved. A later `--local` command asks for it once, or
 reads `ESCROWE_PASSWORD`.
+
+### The LLM
+
+Escrowe asks Claude or ChatGPT, and either one two ways:
+
+```bash
+escrowe llm login             # asks which, and how
+escrowe claude login          # or go straight to one
+escrowe chatgpt login
+escrowe llm status            # which is connected, and how it bills
+escrowe llm logout
+```
+
+| Vendor | Browser login | API key |
+|---|---|---|
+| Claude | Claude Code (`claude`) signs in to your Anthropic account | `ANTHROPIC_API_KEY`, or stored by the wizard |
+| ChatGPT | Codex (`codex`) signs in to your ChatGPT account | `OPENAI_API_KEY`, or stored by the wizard |
+
+The browser login reuses the subscription you already pay for and costs
+nothing per question; an API key bills per token. When both are set up for a
+vendor, the browser login wins unless you chose the key yourself. A stored
+key lives in `~/.escrowe/escrowe.sqlite`, created readable only by you.
 
 Inside the prompt: type a question, or `\sql <query>`, `\meta`, `\audit`,
 `\export <file>`, `\json`, `\feed <question>` (experimental: ask about the
@@ -134,16 +156,17 @@ configuration; unset variables just keep their default in the table below.
 | Variable | Purpose |
 |---|---|
 | `ESCROWE_HOME` | Where state lives (default `~/.escrowe`) |
-| `ESCROWE_LLM` | `auto` \| `anthropic` \| `claude-cli` \| `mock` |
-| `ESCROWE_MODEL` | Model name (default `claude-opus-5`) |
-| `ESCROWE_LLM_THINKING` | Extended-thinking token budget (API-key provider only) |
+| `ESCROWE_LLM` | `auto` \| `anthropic` \| `openai` \| `claude-cli` \| `codex-cli` \| `mock` |
+| `ESCROWE_MODEL` | Model name (default: the connected vendor's own, `claude-opus-5` or `gpt-6-astra`) |
+| `ESCROWE_LLM_THINKING` | Extended-thinking budget (API-key providers only) |
 | `ESCROWE_MAX_ROWS`, `ESCROWE_QUERY_TIMEOUT`, `ESCROWE_AGENT_ATTEMPTS` | Query and agent limits |
 | `ESCROWE_API_ENABLED` | Allow `escrowe serve` |
 | `ESCROWE_FEED_ENABLED` | Allow `\feed` (query results sent back to the LLM), default on |
 | `ESCROWE_JWT_SECRET` | Session signing secret (generated if unset) |
 | `ESCROWE_SERVER` | Default server URL for client commands |
 | `ESCROWE_PASSWORD`, `ESCROWE_USER` | Credentials for scripted `--local` commands |
-| `ANTHROPIC_API_KEY` | Use the API instead of a Claude subscription |
+| `ANTHROPIC_API_KEY`, `OPENAI_API_KEY` | Use the API instead of a subscription |
+| `CLAUDE_BIN`, `CODEX_BIN` | Where the vendor CLI lives, if not on `PATH` |
 
 ## Architecture
 
