@@ -1,16 +1,17 @@
-"""Connecting Claude to escrowe.
+"""Connecting an LLM to escrowe.
 
-Two ways, and they bill differently, which is the whole reason there are two:
+Two vendors - Claude and ChatGPT - and for each the same two ways in, which
+bill differently, the whole reason there are two:
 
-  subscription  Claude Code signs in to your Anthropic account in a browser and
-                escrowe asks it for queries. This uses your Claude subscription,
-                the same one you use interactively. No API bill.
-  api_key       An Anthropic API key, billed per token. Stored in escrowe's
-                catalog, which is created readable only by you.
+  browser   The vendor's own CLI (Claude Code, Codex) signs in to your account
+            in a browser, and escrowe asks it for queries. This uses the
+            subscription you already pay for. No API bill.
+  api_key   An API key, billed per token. Stored in escrowe's catalog, which
+            is created readable only by you.
 
-Checking the subscription is free: `claude auth status` reads local state and
-makes no API call, so escrowe can verify it at every start without spending
-anything.
+Checking a browser login is free: both CLIs answer `status` from local state
+and make no API call, so escrowe can verify one at every start without
+spending anything.
 """
 
 from __future__ import annotations
@@ -21,146 +22,239 @@ import platform
 import shutil
 import subprocess
 import sys
+from collections.abc import Callable
+from dataclasses import dataclass
 
-CLAUDE = os.environ.get("CLAUDE_BIN", "claude")
-API_KEY_SETTING = "anthropic_api_key"
-
-INSTALL_HINT = """Claude Code is what signs in to your Anthropic account.
-
-  npm:    npm install -g @anthropic-ai/claude-code
-  macOS:  brew install --cask claude-code
-  or see  https://claude.ai/download"""
+VENDOR_SETTING = "llm_provider"      # store key: which vendor the person picked
+METHOD_SETTING = "llm_method"        # store key: browser | api_key
 
 
-def claude_installed() -> bool:
-    return shutil.which(CLAUDE) is not None
-
-
-def subscription_status() -> dict:
-    """Is Claude Code signed in? Free to ask: it reads local state, not the API."""
-    if not claude_installed():
-        return {"installed": False, "logged_in": False, "method": None}
+def _claude_signed_in(proc: subprocess.CompletedProcess) -> bool:
+    """`claude auth status` answers in JSON."""
     try:
-        proc = subprocess.run([CLAUDE, "auth", "status"], capture_output=True, text=True, timeout=30)
-        data = json.loads(proc.stdout)
+        return bool(json.loads(proc.stdout).get("loggedIn"))
     except Exception:
-        return {"installed": True, "logged_in": False, "method": None}
-    return {"installed": True, "logged_in": bool(data.get("loggedIn")),
-            "method": data.get("authMethod"), "provider": data.get("apiProvider")}
+        return False
 
 
-def stored_api_key(store=None) -> str | None:
-    if store is not None:
-        value = store.setting(API_KEY_SETTING)
-        if value:
-            return value
-    return os.environ.get("ANTHROPIC_API_KEY") or None
+def _codex_signed_in(proc: subprocess.CompletedProcess) -> bool:
+    """`codex login status` says "Logged in using ChatGPT" (or "... an API
+    key", if that is how codex itself was set up), and "Not logged in" when
+    nobody is. It says it on stderr, not stdout."""
+    said = (proc.stdout + proc.stderr).lower()
+    return proc.returncode == 0 and "logged in" in said and "not logged in" not in said
 
 
-def status(store=None) -> dict:
-    """What would answer a question right now, and what would it cost?"""
-    sub = subscription_status()
-    key = stored_api_key(store)
-    from_env = bool(os.environ.get("ANTHROPIC_API_KEY"))
-    if sub["logged_in"]:
-        source = "subscription"
-    elif key:
-        source = "api_key"
-    else:
-        source = "none"
-    return {"source": source, "connected": source != "none",
-            "claude_installed": sub["installed"], "logged_in": sub["logged_in"],
-            "api_key": bool(key), "api_key_from_env": from_env,
-            # Agent._resolve() checks the api key BEFORE the subscription, so an api
-            # key set alongside a subscription login actually wins in practice even
-            # though `source` above reports "subscription" - this is what's true.
-            "shadowed": bool(key) and sub["logged_in"]}
+@dataclass(frozen=True)
+class Vendor:
+    name: str                        # claude | chatgpt
+    label: str                       # what to call it in a sentence
+    cli: str                         # the CLI that owns the browser login
+    cli_label: str
+    cli_env: str                     # env var that overrides the binary
+    status_args: tuple[str, ...]
+    login_args: tuple[str, ...]
+    logout_args: tuple[str, ...]
+    signed_in: Callable[[subprocess.CompletedProcess], bool]
+    npm: str
+    brew: tuple[str, ...]
+    download: str
+    api_key_setting: str
+    api_key_env: str
+    cli_provider: str                # agent provider for the browser login
+    api_provider: str                # agent provider for the API key
+    model: str                       # default model for the API provider
+    sdk: str                         # the package the API provider imports
 
 
-def describe(st: dict | None = None, store=None) -> str:
-    st = st or status(store)
-    return {
-        "subscription": "Claude is connected through your Claude subscription.",
-        "api_key": "Claude is connected with an API key, billed per token.",
-        "none": "Claude is not connected.",
-    }[st["source"]]
+VENDORS: dict[str, Vendor] = {
+    "claude": Vendor(
+        name="claude", label="Claude", cli="claude", cli_label="Claude Code", cli_env="CLAUDE_BIN",
+        status_args=("auth", "status"), login_args=("auth", "login"), logout_args=("auth", "logout"),
+        signed_in=_claude_signed_in,
+        npm="@anthropic-ai/claude-code", brew=("--cask", "claude-code"),
+        download="https://claude.ai/download",
+        api_key_setting="anthropic_api_key", api_key_env="ANTHROPIC_API_KEY",
+        cli_provider="claude-cli", api_provider="anthropic", model="claude-opus-5", sdk="anthropic"),
+    "chatgpt": Vendor(
+        name="chatgpt", label="ChatGPT", cli="codex", cli_label="Codex", cli_env="CODEX_BIN",
+        status_args=("login", "status"), login_args=("login",), logout_args=("logout",),
+        signed_in=_codex_signed_in,
+        npm="@openai/codex", brew=("codex",),
+        download="https://developers.openai.com/codex",
+        api_key_setting="openai_api_key", api_key_env="OPENAI_API_KEY",
+        cli_provider="codex-cli", api_provider="openai", model="gpt-6-astra", sdk="openai"),
+}
+
+DEFAULT_VENDOR = "claude"
 
 
-# ------------------------------------------------------------------ subscription
+def vendor(name: str | None = None) -> Vendor:
+    return VENDORS.get(name or "", VENDORS[DEFAULT_VENDOR])
 
-def install_command() -> list[str] | None:
+
+def for_provider(provider: str) -> Vendor | None:
+    """Which vendor an agent provider name belongs to, if any."""
+    return next((v for v in VENDORS.values() if provider in (v.cli_provider, v.api_provider)), None)
+
+
+def install_hint(v: Vendor) -> str:
+    return f"""{v.cli_label} is what signs in to your {v.label} account.
+
+  npm:    npm install -g {v.npm}
+  brew:   brew install {' '.join(v.brew)}
+  or see  {v.download}"""
+
+
+# ------------------------------------------------------------ browser login
+
+def binary(v: Vendor) -> str:
+    return os.environ.get(v.cli_env, v.cli)
+
+
+def installed(v: Vendor) -> bool:
+    return shutil.which(binary(v)) is not None
+
+
+def browser_status(v: Vendor) -> dict:
+    """Is the CLI signed in? Free to ask: it reads local state, not the API."""
+    if not installed(v):
+        return {"installed": False, "logged_in": False}
+    try:
+        proc = subprocess.run([binary(v), *v.status_args], capture_output=True, text=True, timeout=30)
+    except Exception:
+        return {"installed": True, "logged_in": False}
+    return {"installed": True, "logged_in": v.signed_in(proc)}
+
+
+def install_command(v: Vendor) -> list[str] | None:
     if shutil.which("npm"):
-        return ["npm", "install", "-g", "@anthropic-ai/claude-code"]
+        return ["npm", "install", "-g", v.npm]
     if platform.system() == "Darwin" and shutil.which("brew"):
-        return ["brew", "install", "--cask", "claude-code"]
+        return ["brew", "install", *v.brew]
     return None
 
 
-def install_claude_code() -> None:
-    cmd = install_command()
+def install_cli(v: Vendor) -> None:
+    cmd = install_command(v)
     if cmd is None:
-        raise RuntimeError(INSTALL_HINT)
+        raise RuntimeError(install_hint(v))
     proc = subprocess.run(cmd, stdin=sys.stdin, stdout=sys.stdout, stderr=sys.stderr)
     if proc.returncode != 0:
         raise RuntimeError(f"`{' '.join(cmd)}` failed.")
-    if not claude_installed():
-        raise RuntimeError("Claude Code installed but is not on your PATH yet. "
+    if not installed(v):
+        raise RuntimeError(f"{v.cli_label} installed but is not on your PATH yet. "
                            "Open a new terminal and try again.")
 
 
-def ensure_claude_code(ask) -> bool:
+def ensure_cli(v: Vendor, ask) -> bool:
     """`ask(cmd)` returns True to run the install."""
-    if claude_installed():
+    if installed(v):
         return True
-    cmd = install_command()
+    cmd = install_command(v)
     if cmd is None:
-        raise RuntimeError(INSTALL_HINT)
+        raise RuntimeError(install_hint(v))
     if not ask(cmd):
         return False
-    install_claude_code()
+    install_cli(v)
     return True
 
 
-def subscription_login() -> dict:
-    """`claude auth login`, with the terminal inherited so the browser opens."""
-    if not claude_installed():
-        raise RuntimeError(INSTALL_HINT)
+def browser_login(v: Vendor) -> dict:
+    """The CLI's own login, with the terminal inherited so the browser opens."""
+    if not installed(v):
+        raise RuntimeError(install_hint(v))
+    cmd = [binary(v), *v.login_args]
     try:
-        proc = subprocess.run([CLAUDE, "auth", "login"], stdin=sys.stdin,
-                              stdout=sys.stdout, stderr=sys.stderr)
+        proc = subprocess.run(cmd, stdin=sys.stdin, stdout=sys.stdout, stderr=sys.stderr)
     except OSError as e:
-        raise RuntimeError(f"Could not run `{CLAUDE} auth login`: {e}")
+        raise RuntimeError(f"Could not run `{' '.join(cmd)}`: {e}")
     if proc.returncode != 0:
         raise RuntimeError("The browser login did not complete.")
-    st = subscription_status()
+    st = browser_status(v)
     if not st["logged_in"]:
-        raise RuntimeError("The login finished but Claude Code is still signed out.")
+        raise RuntimeError(f"The login finished but {v.cli_label} is still signed out.")
     return st
 
 
-def subscription_logout() -> None:
-    if claude_installed():
-        subprocess.run([CLAUDE, "auth", "logout"], capture_output=True)
+def browser_logout(v: Vendor) -> None:
+    if installed(v):
+        subprocess.run([binary(v), *v.logout_args], capture_output=True)
 
 
-# ---------------------------------------------------------------------- api key
+# ---------------------------------------------------------------- api key
 
-def check_api_key(key: str) -> tuple[bool, str]:
+def stored_api_key(store=None, name: str | None = None) -> str | None:
+    v = vendor(name)
+    if store is not None:
+        value = store.setting(v.api_key_setting)
+        if value:
+            return value
+    return os.environ.get(v.api_key_env) or None
+
+
+def check_api_key(v: Vendor, key: str) -> tuple[bool, str]:
     """Validate a key with a request that returns no tokens and costs nothing."""
     try:
-        import anthropic
+        sdk = __import__(v.sdk)
     except ImportError:
-        return True, "stored (the anthropic package is not installed, so it was not checked)"
+        return True, f"stored (the {v.sdk} package is not installed, so it was not checked)"
+    client = sdk.Anthropic(api_key=key) if v.sdk == "anthropic" else sdk.OpenAI(api_key=key)
     try:
-        anthropic.Anthropic(api_key=key).models.list()
+        client.models.list()
     except Exception as e:
         return False, str(e).splitlines()[0][:160]
     return True, "ok"
 
 
-def save_api_key(store, key: str) -> None:
-    store.set_setting(API_KEY_SETTING, key.strip())
+def save_api_key(store, v: Vendor, key: str) -> None:
+    store.set_setting(v.api_key_setting, key.strip())
 
 
-def forget_api_key(store) -> None:
-    store.set_setting(API_KEY_SETTING, "")
+def forget_api_key(store, v: Vendor | None = None) -> None:
+    for each in [v] if v else VENDORS.values():
+        store.set_setting(each.api_key_setting, "")
+
+
+# ------------------------------------------------------------------ status
+
+def chosen_vendor(store=None) -> str | None:
+    return (store.setting(VENDOR_SETTING) or None) if store is not None else None
+
+
+def _source(store, v: Vendor) -> str:
+    """Which way in is used. The person's own choice wins when it still works;
+    otherwise the browser login does, because it does not bill per token."""
+    have = {"browser": browser_status(v)["logged_in"], "api_key": bool(stored_api_key(store, v.name))}
+    picked = store.setting(METHOD_SETTING) if store is not None else None
+    if have.get(picked):
+        return picked
+    return next((m for m, ok in have.items() if ok), "none")
+
+
+def status(store=None, name: str | None = None) -> dict:
+    """What would answer a question right now, and what would it cost?
+
+    Without a vendor, the one the person picked; failing that, whichever is
+    actually connected."""
+    name = name or chosen_vendor(store)
+    if name is None:
+        name = next((n for n in VENDORS if _source(store, VENDORS[n]) != "none"), DEFAULT_VENDOR)
+    v = vendor(name)
+    source = _source(store, v)
+    cli = browser_status(v)
+    return {"vendor": v.name, "label": v.label, "source": source, "connected": source != "none",
+            "cli": binary(v), "cli_label": v.cli_label, "cli_installed": cli["installed"],
+            "logged_in": cli["logged_in"], "api_key": bool(stored_api_key(store, v.name)),
+            "api_key_from_env": bool(os.environ.get(v.api_key_env)), "api_key_env": v.api_key_env,
+            "provider": {"browser": v.cli_provider, "api_key": v.api_provider, "none": "mock"}[source],
+            "model": v.model}
+
+
+def describe(st: dict | None = None, store=None) -> str:
+    st = st or status(store)
+    return {
+        "browser": f"{st['label']} is connected through your {st['label']} subscription.",
+        "api_key": f"{st['label']} is connected with an API key, billed per token.",
+        "none": "No LLM is connected.",
+    }[st["source"]]

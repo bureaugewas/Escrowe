@@ -1,13 +1,13 @@
 """The `escrowe` command.
 
-    escrowe                         guided: connect a database, connect Claude, ask questions
+    escrowe                         guided: connect a database, connect an LLM, ask questions
     escrowe -ui                     the same, in the browser
     escrowe connect [dsn]           connect a database (asks when no dsn is given)
     escrowe disconnect              forget the connected database
     escrowe ask "question"          one question, JSON out
     escrowe sql "SELECT ..."        one query, JSON out
     escrowe meta                    the schema the agent sees
-    escrowe claude login|status|logout
+    escrowe llm login|status|logout  (or `escrowe claude …` / `escrowe chatgpt …`)
     escrowe llm-log                 everything sent to the LLM
     escrowe serve / login / shell   the HTTP server, and sessions against one
 
@@ -31,8 +31,8 @@ from .console import BLUE, NAME, console
 
 app = typer.Typer(add_completion=False, invoke_without_command=True, no_args_is_help=False,
                   help="Escrowe: a blind-agent query gateway for your database.")
-claude_app = typer.Typer(help="Connect Claude: login, status, logout.")
-app.add_typer(claude_app, name="claude")
+llm_app = typer.Typer(help="Connect an LLM: login, status, logout.")
+app.add_typer(llm_app, name="llm")
 
 SESSION_FILE = home_dir() / "session.json"
 
@@ -59,7 +59,7 @@ def interactive() -> None:
     svc = conn.svc
     console.print(f"{NAME} {__version__}   a blind-agent query gateway")
 
-    claude_ok = wizard.ensure_claude(svc, interactive=wizard.is_tty(), quiet=True)
+    llm_ok = wizard.ensure_llm(svc, interactive=wizard.is_tty(), quiet=True)
     if svc.source is not None and wizard.is_tty() and not wizard.confirm_saved_connection(conn):
         svc = conn.svc
     if svc.source is None:
@@ -69,7 +69,7 @@ def interactive() -> None:
 
     tables = conn.metadata()["tables"]
     console.print(f"[dim]{svc.source.name} ({svc.source.kind}) · {len(tables)} tables · "
-                  f"claude: {'ready' if claude_ok else 'not connected'}[/]")
+                  f"llm: {'ready' if llm_ok else 'not connected'}[/]")
     repl.table_overview(tables)
     repl.run(conn)
 
@@ -116,8 +116,9 @@ def connect_cmd(dsn: str = typer.Argument(None, help="e.g. mysql://user:pw@host:
     except (ValueError, EscroweError) as e:
         print(json.dumps({"connected": False, "reason": str(e)}))
         raise typer.Exit(1)
+    st = llm_login.status(conn.svc.store)
     print(json.dumps({"connected": True, "source": res["name"], "kind": res["kind"], "tables": res["tables"],
-                      "claude": llm_login.status(conn.svc.store)["source"]}))
+                      "llm": {"vendor": st["vendor"], "source": st["source"]}}))
 
 
 @app.command()
@@ -216,40 +217,59 @@ def _open(local: bool, dsn: str | None, user: str | None, password: str | None):
     return conn
 
 
-# ----------------------------------------------------------------- claude
+# -------------------------------------------------------------------- llm
 
-@claude_app.command("login")
-def claude_login():
-    """Connect Claude: your subscription (browser login) or an API key."""
+_VENDOR_HELP = " | ".join(llm_login.VENDORS)
+
+
+@llm_app.command("login")
+def llm_login_cmd(vendor: str = typer.Option(None, "--vendor", help=_VENDOR_HELP)):
+    """Connect an LLM: your subscription (browser login) or an API key."""
     conn = embedded(load_settings(), operator=True)
-    if not wizard.ensure_claude(conn.svc, force=True):
+    if not wizard.ensure_llm(conn.svc, force=True, vendor=vendor):
         raise typer.Exit(1)
 
 
-@claude_app.command("status")
-def claude_status():
-    """Show how Claude is connected, and how it is billed."""
+@llm_app.command("status")
+def llm_status_cmd(vendor: str = typer.Option(None, "--vendor", help=_VENDOR_HELP)):
+    """Show which LLM is connected, how, and how it is billed."""
     store = embedded(load_settings(), operator=True).svc.store
-    st = llm_login.status(store)
+    st = llm_login.status(store, vendor)
     console.print(llm_login.describe(st))
     if st["source"] == "api_key" and st["api_key_from_env"]:
-        console.print("[dim]the key comes from ANTHROPIC_API_KEY in your environment[/]")
-    if st["shadowed"]:
-        console.print("[yellow]ANTHROPIC_API_KEY is set and wins over the browser login. "
-                      "Unset it to use the profile.[/]")
+        console.print(f"[dim]the key comes from {st['api_key_env']} in your environment[/]")
+    if st["source"] == "browser" and st["api_key_from_env"]:
+        console.print(f"[yellow]{st['api_key_env']} is set in your environment.[/] "
+                      f"{st['cli_label']} may spend API credit with it instead of the subscription.")
     if not st["connected"]:
-        console.print("Run [bold]escrowe claude login[/] to connect it.")
-        if not st["claude_installed"]:
-            console.print(f"[dim]{llm_login.INSTALL_HINT}[/]")
+        console.print(f"Run [bold]escrowe llm login --vendor {st['vendor']}[/] to connect it.")
+        if not st["cli_installed"]:
+            console.print(f"[dim]{llm_login.install_hint(llm_login.vendor(st['vendor']))}[/]")
 
 
-@claude_app.command("logout")
-def claude_logout():
-    """Sign out of the subscription and forget any stored API key."""
+@llm_app.command("logout")
+def llm_logout_cmd(vendor: str = typer.Option(None, "--vendor", help=_VENDOR_HELP)):
+    """Sign out of the browser login and forget any stored API key."""
     store = embedded(load_settings(), operator=True).svc.store
-    llm_login.forget_api_key(store)
-    llm_login.subscription_logout()
-    console.print("Disconnected Claude.")
+    v = llm_login.vendor(llm_login.status(store, vendor)["vendor"])
+    llm_login.forget_api_key(store, v)
+    llm_login.browser_logout(v)
+    console.print(f"Disconnected {v.label}.")
+
+
+def _vendor_app(name: str) -> typer.Typer:
+    """`escrowe claude …` and `escrowe chatgpt …`: the same three commands,
+    pinned to one vendor so nobody has to type --vendor."""
+    v = llm_login.VENDORS[name]
+    sub = typer.Typer(help=f"Connect {v.label}: login, status, logout.")
+    sub.command("login")(lambda: llm_login_cmd(name))
+    sub.command("status")(lambda: llm_status_cmd(name))
+    sub.command("logout")(lambda: llm_logout_cmd(name))
+    return sub
+
+
+for _name in llm_login.VENDORS:
+    app.add_typer(_vendor_app(_name), name=_name)
 
 
 @app.command(name="llm-log")
@@ -283,7 +303,9 @@ def llm_log(limit: int = typer.Option(10, help="How many of the most recent call
         print("\n".join(tr.context_lines(entries)))
         return
     for e in entries:
-        console.print(f"[bold {BLUE}]{e['ts']}[/] {e.get('user') or '-'} · {e['provider']}/{e['model']} · "
+        # A CLI provider names no model: it answered as whatever it is set to.
+        console.print(f"[bold {BLUE}]{e['ts']}[/] {e.get('user') or '-'} · "
+                      f"{e['provider']}{'/' + e['model'] if e['model'] else ''} · "
                       f"{e['sent_chars']} chars sent · {e['duration_ms']} ms"
                       + (f" · [red]{e['error']}[/]" if e.get("error") else ""))
         if full:
@@ -319,7 +341,7 @@ def login(server: str = typer.Option(None, help="Escrowe server URL"),
           password: str = typer.Option(None, prompt=True, hide_input=True)):
     """Sign in to an Escrowe server with your database account; later commands reuse the session.
 
-    Not needed for --local commands. For Claude, use `escrowe claude login`.
+    Not needed for --local commands. For an LLM, use `escrowe llm login`.
     """
     server = server or load_settings().server_url
     try:

@@ -17,7 +17,6 @@ from dataclasses import dataclass, field
 
 import pyarrow as pa
 
-from . import llm_login
 from .agent import Agent, Attempt, HistoryTurn
 from .config import Settings
 from .engines import REGISTRY, DirectEngine, EngineError
@@ -143,11 +142,11 @@ class Escrowe:
 
     def _build_agent(self) -> Agent:
         s = self.settings
-        return Agent(s.llm_provider, s.llm_model, api_key=llm_login.stored_api_key(self.store),
-                     store=self.store, transcript=self.transcript, thinking_budget=s.llm_thinking_budget)
+        return Agent(s.llm_provider, s.llm_model, store=self.store,
+                     transcript=self.transcript, thinking_budget=s.llm_thinking_budget)
 
     def reload_agent(self) -> None:
-        """After connecting Claude, pick the new credential up without a restart."""
+        """After connecting an LLM, pick the new credential up without a restart."""
         self.agent = self._build_agent()
 
     def _restore_saved_source(self) -> None:
