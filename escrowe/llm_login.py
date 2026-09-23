@@ -38,10 +38,11 @@ def _claude_signed_in(proc: subprocess.CompletedProcess) -> bool:
 
 
 def _codex_signed_in(proc: subprocess.CompletedProcess) -> bool:
-    """`codex login status` prints "Logged in using ChatGPT" (or "... an API
-    key", if that is how codex itself was set up) and exits non-zero when
-    nobody is signed in."""
-    return proc.returncode == 0 and "logged in" in proc.stdout.lower()
+    """`codex login status` says "Logged in using ChatGPT" (or "... an API
+    key", if that is how codex itself was set up), and "Not logged in" when
+    nobody is. It says it on stderr, not stdout."""
+    said = (proc.stdout + proc.stderr).lower()
+    return proc.returncode == 0 and "logged in" in said and "not logged in" not in said
 
 
 @dataclass(frozen=True)

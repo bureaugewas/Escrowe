@@ -49,8 +49,10 @@ def test_the_cli_status_replies_are_read_correctly():
     claude, chatgpt = llm_login.VENDORS["claude"], llm_login.VENDORS["chatgpt"]
     assert claude.signed_in(subprocess.CompletedProcess([], 0, '{"loggedIn": true}', ""))
     assert not claude.signed_in(subprocess.CompletedProcess([], 0, "not json", ""))
-    assert chatgpt.signed_in(subprocess.CompletedProcess([], 0, "Logged in using ChatGPT", ""))
-    assert not chatgpt.signed_in(subprocess.CompletedProcess([], 1, "Not logged in", ""))
+    # codex says it on stderr, and "Not logged in" contains "logged in".
+    assert chatgpt.signed_in(subprocess.CompletedProcess([], 0, "", "Logged in using ChatGPT\n"))
+    assert not chatgpt.signed_in(subprocess.CompletedProcess([], 1, "", "Not logged in\n"))
+    assert not chatgpt.signed_in(subprocess.CompletedProcess([], 0, "", "Not logged in\n"))
 
 
 # ------------------------------------------------------------ the api keys
