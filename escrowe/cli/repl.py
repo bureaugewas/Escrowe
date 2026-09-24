@@ -9,9 +9,9 @@ import time
 from pathlib import Path
 
 try:
-    import readline  # noqa: F401  (line editing and history in input())
+    import readline  # line editing and history in input()
 except ImportError:
-    pass
+    readline = None
 
 import typer
 from rich.markup import escape
@@ -19,7 +19,7 @@ from rich.table import Table
 
 from ..client import EscroweAuthError, EscroweDenied, EscroweError, Result
 from . import wizard
-from .console import NAME, StreamPrinter, console, print_llm_text, status, style_command
+from .console import BLUE, NAME, StreamPrinter, console, print_llm_text, status, style_command
 
 IDLE_MINUTES = float(os.environ.get("ESCROWE_IDLE_MINUTES", "30"))
 FEED_MAX_ROWS = 50
@@ -38,14 +38,17 @@ HELP = [
 ]
 
 _ANSI = re.compile(r"(\x1b\[[0-9;]*m)")
+# macOS Python ships libedit, which prints \001/\002-wrapped codes ahead of the
+# text (so the colour never lands on it); only GNU readline gets the markers.
+_GNU_READLINE = readline is not None and "libedit" not in (readline.__doc__ or "")
 
 
 def _readline_prompt(markup: str) -> str:
-    """Render Rich markup to a plain input() prompt, with escape codes wrapped
-    in \\001/\\002 so readline knows they take no width and redraws correctly."""
+    """Render Rich markup to a plain input() prompt. Under GNU readline the
+    escape codes are wrapped in \\001/\\002 so it knows they take no width."""
     with console.capture() as cap:
         console.print(markup, end="")
-    return _ANSI.sub(r"\001\1\002", cap.get())
+    return _ANSI.sub(r"\001\1\002", cap.get()) if _GNU_READLINE else cap.get()
 
 
 def run(conn, idle_minutes: float = IDLE_MINUTES, prompt: str | None = None) -> str:
@@ -153,7 +156,7 @@ def show(res: Result, max_rows: int = 200, streamed: bool = False) -> Result:
         console.print(f"[dim]from the schema · audit #{res.audit_id}[/]")
         return res
     console.print(f"[dim]sql:[/] {res.sql}")
-    table = Table(show_lines=False, header_style="bold cyan")
+    table = Table(show_lines=False, header_style=f"bold {BLUE}")
     for c in res.columns:
         table.add_column(c)
     for r in res.rows[:max_rows]:

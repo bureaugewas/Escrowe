@@ -86,9 +86,16 @@ def test_a_stored_key_never_appears_in_the_status(store):
 
 # ----------------------------------------------------------- which way in
 
-def test_nothing_connected_answers_with_the_mock(store):
+def test_nothing_connected_answers_nothing(store):
     st = llm_login.status(store, "chatgpt")
-    assert st["source"] == "none" and st["provider"] == "mock" and not st["connected"]
+    assert st["source"] == "none" and st["provider"] == "none" and not st["connected"]
+
+
+def test_not_now_wins_over_a_login_that_still_exists(store, monkeypatch):
+    signed_in(monkeypatch, "chatgpt")
+    store.set_setting(llm_login.VENDOR_SETTING, llm_login.NO_LLM)
+    st = llm_login.status(store)
+    assert st["source"] == "none" and st["provider"] == "none" and not st["connected"]
 
 
 def test_a_browser_login_is_preferred_over_a_key_because_it_does_not_bill(store, monkeypatch):

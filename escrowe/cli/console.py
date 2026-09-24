@@ -17,7 +17,7 @@ console = Console(color_system="standard" if sys.stdout.isatty() else None)
 
 # Named ANSI colours rather than truecolor hex: every terminal that does
 # colour at all renders the 16 standard names exactly.
-BLUE = "bright_blue"
+BLUE = "cyan"                      # bright_* renders near-white in some themes
 NAME = f"[bold {BLUE}]Escrowe[/]"
 CMD_STYLE = "blue"                 # a \command in \help
 PLACEHOLDER_STYLE = "magenta"      # <query> / <file> inside a \command
