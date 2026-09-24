@@ -24,7 +24,7 @@ import sys
 import typer
 
 from .. import __version__, llm_login
-from ..client import Connection, EscroweAuthError, EscroweDenied, EscroweError, LocalConnection, connect, embedded
+from ..client import Connection, EscroweAuthError, EscroweDenied, EscroweError, connect, embedded
 from ..config import home_dir, load_settings
 from . import repl, wizard
 from .console import BLUE, NAME, console
