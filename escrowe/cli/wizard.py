@@ -152,7 +152,7 @@ def ensure_llm(svc, interactive: bool = True, force: bool = False, quiet: bool =
             if not quiet:
                 console.print(f"[dim]{llm_login.describe(st)}[/]")
             return True
-        if typer.confirm(f"Keep using {llm_login.describe(st)}?", default=True):
+        if typer.confirm(f"Keep using {st['label']}?", default=True):
             return True
         llm_login.forget_api_key(svc.store, llm_login.vendor(chosen))
         svc.store.set_setting(llm_login.VENDOR_SETTING, "")
@@ -174,6 +174,8 @@ def _choose_llm(svc, vendor: str | None = None) -> bool:
         console.print(f"  {len(names) + 1}. Not now - only \\sql will work")
         pick = typer.prompt("Which", default="1").strip()
         if pick not in [str(i) for i in range(1, len(names) + 1)]:
+            svc.store.set_setting(llm_login.VENDOR_SETTING, llm_login.NO_LLM)
+            svc.reload_agent()
             console.print("[yellow]Skipped.[/] Run [bold]escrowe llm login[/] when you want to connect one.")
             return False
         vendor = names[int(pick) - 1]

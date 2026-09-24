@@ -27,6 +27,7 @@ from dataclasses import dataclass
 
 VENDOR_SETTING = "llm_provider"      # store key: which vendor the person picked
 METHOD_SETTING = "llm_method"        # store key: browser | api_key
+NO_LLM = "none"                      # VENDOR_SETTING when the person chose "not now"
 
 
 def _claude_signed_in(proc: subprocess.CompletedProcess) -> bool:
@@ -254,14 +255,15 @@ def status(store=None, name: str | None = None) -> dict:
     name = name or chosen_vendor(store)
     if name is None:
         name = next((n for n in VENDORS if _source(store, VENDORS[n]) != "none"), DEFAULT_VENDOR)
-    v = vendor(name)
-    source = _source(store, v)
+    declined = name == NO_LLM             # a login that still exists is not a reason to use it
+    v = vendor(DEFAULT_VENDOR if declined else name)
+    source = "none" if declined else _source(store, v)
     cli = browser_status(v)
     return {"vendor": v.name, "label": v.label, "source": source, "connected": source != "none",
             "cli": binary(v), "cli_label": v.cli_label, "cli_installed": cli["installed"],
             "logged_in": cli["logged_in"], "api_key": bool(stored_api_key(store, v.name)),
             "api_key_from_env": bool(os.environ.get(v.api_key_env)), "api_key_env": v.api_key_env,
-            "provider": {"browser": v.cli_provider, "api_key": v.api_provider, "none": "mock"}[source],
+            "provider": {"browser": v.cli_provider, "api_key": v.api_provider, "none": "none"}[source],
             "model": v.model}
 
 

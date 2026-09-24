@@ -12,6 +12,8 @@ Providers:
   claude-cli  the Claude Code CLI (`claude -p`), reusing its browser login
   codex-cli   the Codex CLI (`codex exec`), reusing its ChatGPT browser login
   mock        a deterministic stand-in for tests and offline demos
+  none        no LLM connected: every question is refused
+  none        no LLM connected: every question is refused
 
 A CLI provider is given no model: it answers with whatever that CLI is set to,
 which is the account holder's own choice, not escrowe's.
@@ -80,7 +82,7 @@ FEED_SYSTEM = ("You are answering a follow-up question about a database query re
 HISTORY_MAX_TURNS = 20
 HISTORY_MAX_CHARS = 6000
 CLI_TIMEOUT_S = 180
-PROVIDERS = ("anthropic", "openai", "claude-cli", "codex-cli", "mock")
+PROVIDERS = ("anthropic", "openai", "claude-cli", "codex-cli", "mock", "none")
 
 
 @dataclass
@@ -264,8 +266,8 @@ class Agent:
         return AgentResult(answer=raw.strip(), provider=self.provider)
 
     def _unreachable(self) -> AgentResult:
-        if self.provider == "mock":
-            return AgentResult(refusal="Claude is not connected, so questions cannot be answered.",
+        if self.provider == "none":
+            return AgentResult(refusal="No LLM is connected, so questions cannot be answered.",
                                provider=self.provider, needs_login=True)
         reason = f"Claude could not be reached. {self.last_error}" if self.last_error else "Claude did not reply."
         return AgentResult(refusal=reason, provider=self.provider, needs_login=self.needs_login)
@@ -307,7 +309,9 @@ class Agent:
                 return self._ask_claude_cli(system + "\n\n" + user, on_token)
             if self.provider == "codex-cli":
                 return self._ask_codex_cli(system + "\n\n" + user, on_token)
-            return self._ask_mock(system, user, on_token)
+            if self.provider == "mock":
+                return self._ask_mock(system, user, on_token)
+            return None
         except Exception as e:                       # a provider failure is not a crash
             self.last_error = f"{type(e).__name__}: {str(e).splitlines()[0][:200]}"
             return None
