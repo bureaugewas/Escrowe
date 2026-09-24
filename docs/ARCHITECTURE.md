@@ -1,11 +1,14 @@
 # How Escrowe works
 
 Four levels, from the big picture down to one request. Each diagram is a
-plain SVG in this folder.
+plain SVG in this folder, rendered to a light and a dark PNG.
 
 ## 1. Who sees what
 
-![overview](01-overview.svg)
+<picture>
+  <source media="(prefers-color-scheme: dark)" srcset="01-overview-dark.png">
+  <img alt="overview" src="01-overview.png">
+</picture>
 
 Three parties: you, the LLM agent, and your database. Escrowe sits between
 them and enforces one asymmetry. The agent gets the schema and, when it
@@ -15,7 +18,10 @@ decide what is readable at all.
 
 ## 2. The modules
 
-![modules](02-modules.svg)
+<picture>
+  <source media="(prefers-color-scheme: dark)" srcset="02-modules-dark.png">
+  <img alt="modules" src="02-modules.png">
+</picture>
 
 There are three ways in and they all end at one object.
 
@@ -36,7 +42,10 @@ There are three ways in and they all end at one object.
 
 ## 3. One question, step by step
 
-![ask flow](03-ask-flow.svg)
+<picture>
+  <source media="(prefers-color-scheme: dark)" srcset="03-ask-flow-dark.png">
+  <img alt="ask flow" src="03-ask-flow.png">
+</picture>
 
 `Escrowe.ask()` in `service.py`:
 
@@ -69,7 +78,10 @@ no schema and no new query, and is marked in the transcript.
 
 ## 4. Engines
 
-![engines](04-engines.svg)
+<picture>
+  <source media="(prefers-color-scheme: dark)" srcset="04-engines-dark.png">
+  <img alt="engines" src="04-engines.png">
+</picture>
 
 An engine provides four things: `catalog()`, `table_sizes()`, `execute()`
 and `test_login()`. `DBAPIEngine` implements the last two once for every
