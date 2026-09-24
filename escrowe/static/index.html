@@ -48,7 +48,10 @@
          border-bottom:1px solid var(--line);position:sticky;top:0;z-index:5;flex-wrap:wrap}
   header b{font-size:15px}
   header .sep{width:1px;height:22px;background:var(--line);margin:0 4px}
-  #nbName{width:200px;padding:5px 9px;font-weight:600}
+  /* Reads as a title, like a cell's; the field shows only on hover or while editing. */
+  #nbName{field-sizing:content;min-width:10ch;max-width:50vw;padding:4px 6px;font-weight:600;font-size:15px;
+          background:transparent;border:1px solid transparent}
+  #nbName:hover,#nbName:focus{border-color:var(--line);background:var(--panel2)}
   .chip{background:var(--panel2);border:1px solid var(--line);border-radius:20px;padding:3px 11px;font-size:12px}
   .dot{display:inline-block;width:7px;height:7px;border-radius:50%;background:var(--dim);margin-right:6px;vertical-align:middle}
   .dot.on{background:var(--ok)}
@@ -304,6 +307,7 @@ async function start(){
   $("whoami").textContent=S.user+(S.operator?" · operator":"");
   $("outBtn").classList.toggle("hide",!S.token);      // nothing to log out of in operator mode
   if(!S.nb.cells.length) loadDraft();
+  fitName();
   if(!S.nb.cells.length) addCell("ask",false);
   for(const c of S.nb.cells) if(c.result&&!S.results[c.id]) S.results[c.id]=analyze(c.result);
   renderAll();
@@ -903,7 +907,7 @@ document.addEventListener("keydown",e=>{ if(e.key==="Escape"&&S.present) setPres
 function cleanCells(){ return S.nb.cells.map(c=>{ const {type,x,y,color,size,view,span,h}=c.chart||{};
   return {id:c.id,kind:c.kind,title:c.title||"",text:c.text||"",chart:{type:type||"auto",x,y,color,size,view:view||null,span,h},
           result:c.result||null}; }); }
-let draftT; function saveDraft(){ clearTimeout(draftT); draftT=setTimeout(()=>{
+let draftT; function saveDraft(){ fitName(); clearTimeout(draftT); draftT=setTimeout(()=>{
   try{ localStorage.setItem(DRAFT_KEY,JSON.stringify({name:$("nbName").value,cells:cleanCells()})); }catch{}
   autoSaveNotebook();
 },400); }
@@ -926,7 +930,9 @@ function autoSaveNotebook(){
 function loadDraft(){
   try{ const d=JSON.parse(localStorage.getItem(DRAFT_KEY)||"null"); if(d?.cells?.length){ S.nb.cells=d.cells; $("nbName").value=d.name||""; } }catch{}
 }
-$("nbName").oninput=saveDraft;
+// Browsers without CSS field-sizing: fit the field to the whole name by hand.
+function fitName(){ const n=$("nbName"); n.size=Math.max(10,(n.value||n.placeholder).length+1); }
+$("nbName").oninput=()=>{ fitName(); saveDraft(); };
 
 // ⌘S forces the same autosave to happen right now, instead of waiting for the
 // debounce - saving is never actually gated on this, there's no button for it.
