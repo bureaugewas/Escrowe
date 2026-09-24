@@ -8,68 +8,68 @@
   <text x="20" y="30" font-size="18" font-weight="600" fill="#1f2933">4. Engines: what a database kind has to provide</text>
 
   <!-- DirectEngine -->
-  <rect x="300" y="60" width="300" height="96" rx="10" fill="#eaf2fc" stroke="#2a78d6" stroke-width="2"/>
+  <rect x="260" y="60" width="380" height="96" rx="10" fill="#eaf2fc" stroke="#2a78d6" stroke-width="2"/>
   <text x="450" y="84" text-anchor="middle" font-weight="700" fill="#2a78d6">DirectEngine · engines/base.py</text>
   <g fill="#1f2933" font-size="12">
-    <text x="320" y="106">catalog()      → [Column]   from the system catalog only</text>
-    <text x="320" y="124">table_sizes()  → {fqn: rows} from catalog statistics</text>
-    <text x="320" y="142">execute(sql)   → pyarrow.Table   ·   test_login(**params)</text>
+    <text x="280" y="106">catalog() → [Column] from the system catalog only</text>
+    <text x="280" y="124">table_sizes() → {fqn: rows} from catalog statistics</text>
+    <text x="280" y="142">execute(sql) → pyarrow.Table · test_login(**params)</text>
   </g>
 
   <!-- DBAPIEngine -->
-  <line x1="380" y1="156" x2="250" y2="200" stroke="#3b4a5a" stroke-width="1.5" marker-end="url(#arrow)"/>
-  <rect x="60" y="200" width="380" height="96" rx="10" fill="#f6f8fa" stroke="#4c6a8a" stroke-width="1.5"/>
-  <text x="250" y="224" text-anchor="middle" font-weight="600" fill="#1f2933">DBAPIEngine</text>
+  <line x1="380" y1="156" x2="280" y2="200" stroke="#3b4a5a" stroke-width="1.5" marker-end="url(#arrow)"/>
+  <rect x="20" y="200" width="520" height="96" rx="10" fill="#f6f8fa" stroke="#4c6a8a" stroke-width="1.5"/>
+  <text x="280" y="224" text-anchor="middle" font-weight="600" fill="#1f2933">DBAPIEngine</text>
   <g fill="#5c6b7a" font-size="12">
-    <text x="80" y="246">shared for PEP 249 drivers: the lock, close(),</text>
-    <text x="80" y="264">execute() → rows_to_arrow(), _fetchall() for catalog SQL,</text>
-    <text x="80" y="282">_apply_timeout(cur, s) hook for a per-query timeout</text>
+    <text x="40" y="246">shared for PEP 249 drivers: the lock, close(),</text>
+    <text x="40" y="264">execute() → rows_to_arrow(), _fetchall() for catalog SQL,</text>
+    <text x="40" y="282">_apply_timeout(cur, s) hook for a per-query timeout</text>
   </g>
 
   <!-- DBAPI subclasses -->
   <g stroke="#3b4a5a" stroke-width="1.5" marker-end="url(#arrow)">
-    <line x1="120" y1="296" x2="110" y2="340"/>
-    <line x1="210" y1="296" x2="210" y2="340"/>
-    <line x1="300" y1="296" x2="310" y2="340"/>
-    <line x1="390" y1="296" x2="410" y2="340"/>
+    <line x1="83" y1="296" x2="83" y2="340"/>
+    <line x1="214" y1="296" x2="214" y2="340"/>
+    <line x1="345" y1="296" x2="345" y2="340"/>
+    <line x1="476" y1="296" x2="476" y2="340"/>
   </g>
   <g fill="#ffffff" stroke="#4c6a8a" stroke-width="1.2">
-    <rect x="60" y="340" width="95" height="70" rx="8"/>
-    <rect x="163" y="340" width="95" height="70" rx="8"/>
-    <rect x="266" y="340" width="95" height="70" rx="8"/>
-    <rect x="369" y="340" width="95" height="70" rx="8"/>
+    <rect x="20" y="340" width="126" height="70" rx="8"/>
+    <rect x="151" y="340" width="126" height="70" rx="8"/>
+    <rect x="282" y="340" width="126" height="70" rx="8"/>
+    <rect x="413" y="340" width="126" height="70" rx="8"/>
   </g>
   <g text-anchor="middle" fill="#1f2933" font-weight="600" font-size="12">
-    <text x="107" y="362">mysql</text>
-    <text x="210" y="362">postgres</text>
-    <text x="313" y="362">sqlserver</text>
-    <text x="416" y="362">sqlite</text>
+    <text x="83" y="362">mysql</text>
+    <text x="214" y="362">postgres</text>
+    <text x="345" y="362">sqlserver</text>
+    <text x="476" y="362">sqlite</text>
   </g>
-  <g text-anchor="middle" fill="#5c6b7a" font-size="11">
-    <text x="107" y="380">PyMySQL</text>
-    <text x="107" y="396">information_schema</text>
-    <text x="210" y="380">psycopg</text>
-    <text x="210" y="396">information_schema</text>
-    <text x="313" y="380">pymssql</text>
-    <text x="313" y="396">INFORMATION_SCHEMA</text>
-    <text x="416" y="380">stdlib sqlite3</text>
-    <text x="416" y="396">sqlite_master</text>
+  <g text-anchor="middle" fill="#5c6b7a" font-size="10">
+    <text x="83" y="380">PyMySQL</text>
+    <text x="83" y="396">information_schema</text>
+    <text x="214" y="380">psycopg</text>
+    <text x="214" y="396">information_schema</text>
+    <text x="345" y="380">pymssql</text>
+    <text x="345" y="396">INFORMATION_SCHEMA</text>
+    <text x="476" y="380">stdlib sqlite3</text>
+    <text x="476" y="396">sqlite_master</text>
   </g>
 
   <!-- DuckDB branch -->
-  <line x1="520" y1="156" x2="640" y2="200" stroke="#3b4a5a" stroke-width="1.5" marker-end="url(#arrow)"/>
-  <rect x="520" y="200" width="320" height="96" rx="10" fill="#f6f8fa" stroke="#4c6a8a" stroke-width="1.5"/>
-  <text x="680" y="224" text-anchor="middle" font-weight="600" fill="#1f2933">DuckDBEngine · engines/ducklake.py</text>
+  <line x1="520" y1="156" x2="720" y2="200" stroke="#3b4a5a" stroke-width="1.5" marker-end="url(#arrow)"/>
+  <rect x="560" y="200" width="320" height="96" rx="10" fill="#f6f8fa" stroke="#4c6a8a" stroke-width="1.5"/>
+  <text x="720" y="224" text-anchor="middle" font-weight="600" fill="#1f2933">DuckDBEngine · engines/ducklake.py</text>
   <g fill="#5c6b7a" font-size="12">
-    <text x="540" y="246">a local .duckdb file; duckdb_columns() / duckdb_tables()</text>
-    <text x="540" y="264">for the catalog, native Arrow results, interrupt() timeout</text>
-    <text x="540" y="282">requires_credentials = False (no per-account login)</text>
+    <text x="574" y="246">a local .duckdb file; duckdb_columns() / duckdb_tables()</text>
+    <text x="574" y="264">for the catalog, native Arrow results, interrupt() timeout</text>
+    <text x="574" y="282">requires_credentials = False (no per-account login)</text>
   </g>
-  <line x1="680" y1="296" x2="680" y2="340" stroke="#3b4a5a" stroke-width="1.5" marker-end="url(#arrow)"/>
-  <rect x="560" y="340" width="240" height="70" rx="8" fill="#ffffff" stroke="#4c6a8a" stroke-width="1.2"/>
-  <text x="680" y="362" text-anchor="middle" font-weight="600" font-size="12" fill="#1f2933">DuckLakeEngine</text>
-  <text x="680" y="380" text-anchor="middle" fill="#5c6b7a" font-size="11">only the connect step differs:</text>
-  <text x="680" y="396" text-anchor="middle" fill="#5c6b7a" font-size="11">LOAD ducklake; ATTACH 'ducklake:…' AS lake</text>
+  <line x1="720" y1="296" x2="720" y2="340" stroke="#3b4a5a" stroke-width="1.5" marker-end="url(#arrow)"/>
+  <rect x="585" y="340" width="270" height="70" rx="8" fill="#ffffff" stroke="#4c6a8a" stroke-width="1.2"/>
+  <text x="720" y="362" text-anchor="middle" font-weight="600" font-size="12" fill="#1f2933">DuckLakeEngine</text>
+  <text x="720" y="380" text-anchor="middle" fill="#5c6b7a" font-size="11">only the connect step differs:</text>
+  <text x="720" y="396" text-anchor="middle" fill="#5c6b7a" font-size="11">LOAD ducklake; ATTACH 'ducklake:…' AS lake</text>
 
   <text x="20" y="440" font-size="11" fill="#5c6b7a">Rule for every engine: catalog() and table_sizes() may read the database's own catalog, never a user table. execute() runs exactly the SQL it is given.</text>
 </svg>

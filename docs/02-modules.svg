@@ -38,6 +38,7 @@
   <!-- layer 3: parts -->
   <rect x="20" y="320" width="860" height="120" rx="10" fill="#f6f8fa" stroke="#c7d2de"/>
   <text x="34" y="342" font-size="12" font-weight="600" fill="#5c6b7a">USED BY THE CORE</text>
+  <text x="866" y="342" text-anchor="end" fill="#5c6b7a" font-size="11">also: config.py (Settings from env) · sources.py (connection strings → Source)</text>
   <g fill="#ffffff" stroke="#4c6a8a" stroke-width="1.2">
     <rect x="40" y="352" width="130" height="72" rx="8"/>
     <rect x="182" y="352" width="130" height="72" rx="8"/>
@@ -68,7 +69,6 @@
     <text x="805" y="394">HS256 JWT</text>
     <text x="805" y="410">sessions</text>
   </g>
-  <text x="450" y="458" text-anchor="middle" fill="#5c6b7a" font-size="12">also: config.py (Settings from env) · sources.py (connection strings → Source)</text>
 
   <line x1="389" y1="440" x2="389" y2="480" stroke="#3b4a5a" stroke-width="1.5" marker-end="url(#arrow)"/>
 

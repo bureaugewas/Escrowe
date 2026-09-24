@@ -1,6 +1,9 @@
 # Escrowe
 
-![Escrowe overview](docs/01-overview.svg)
+<picture>
+  <source media="(prefers-color-scheme: dark)" srcset="docs/01-overview-dark.png">
+  <img alt="Escrowe overview" src="docs/01-overview.png">
+</picture>
 
 Escrowe lets an LLM agent write SQL against your database without ever
 seeing the data. It connects with a real database account, shows the agent
