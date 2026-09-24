@@ -47,6 +47,7 @@
   header{display:flex;gap:8px;align-items:center;padding:8px 16px;background:var(--panel);
          border-bottom:1px solid var(--line);position:sticky;top:0;z-index:5;flex-wrap:wrap}
   header b{font-size:15px}
+  #logo{display:block;margin-right:-2px}
   header .sep{width:1px;height:22px;background:var(--line);margin:0 4px}
   /* Reads as a title, like a cell's; the field shows only on hover or while editing. */
   #nbName{field-sizing:content;min-width:10ch;max-width:50vw;padding:4px 6px;font-weight:600;font-size:15px;
@@ -205,6 +206,7 @@
 <!-- -------------------------------------------------------------- app -->
 <div id="app" class="hide">
   <header>
+    <img id="logo" alt="" width="24" height="24">
     <b>Escrowe</b>
     <span class="chip edit-only" id="whoami"></span>
     <span class="sep edit-only"></span>
@@ -258,6 +260,7 @@
 
 <script>
 const $=id=>document.getElementById(id), esc=s=>String(s??"").replace(/[&<>"]/g,c=>({"&":"&amp;","<":"&lt;",">":"&gt;",'"':"&quot;"}[c]));
+$("logo").src=document.querySelector("link[rel=icon]").href;   // the favicon crow, not a second copy of it
 let S={token:null,user:null,idleAt:0,present:false,nb:{name:"",cells:[],source:null},results:{}};
 const IDLE_MS=30*60*1000, DRAFT_KEY="escrowe.notebook.draft";
 const uid=()=>Math.random().toString(36).slice(2,10);
