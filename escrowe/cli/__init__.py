@@ -84,10 +84,7 @@ def browser_ui(port: int = 8765) -> None:
     from ..server import create_app
     from ..service import Escrowe
 
-    svc = Escrowe(load_settings())
-    if svc.source is None:
-        console.print(f"{NAME}   no database connected yet, let's fix that first\n")
-        wizard.connect_database(LocalConnection(svc, operator=True))
+    svc = Escrowe(load_settings())      # a database and an LLM are connected from the interface
     url = f"http://127.0.0.1:{port}"
     console.print(f"{NAME} interface  {url}   (ctrl-c to stop)")
     threading.Timer(1.0, lambda: webbrowser.open(url)).start()
