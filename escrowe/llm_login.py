@@ -177,6 +177,20 @@ def browser_login(v: Vendor) -> dict:
     return st
 
 
+def browser_login_detached(v: Vendor) -> subprocess.Popen:
+    """The CLI's login without a terminal: for the browser interface, where
+    the sign-in tab opens on its own and nobody is watching the process.
+    Poll `browser_status` to learn when it is done."""
+    if not installed(v):
+        raise RuntimeError(install_hint(v))
+    cmd = [binary(v), *v.login_args]
+    try:
+        return subprocess.Popen(cmd, stdin=subprocess.DEVNULL, stdout=subprocess.DEVNULL,
+                                stderr=subprocess.DEVNULL, start_new_session=True)
+    except OSError as e:
+        raise RuntimeError(f"Could not run `{' '.join(cmd)}`: {e}")
+
+
 def browser_logout(v: Vendor) -> None:
     if installed(v):
         subprocess.run([binary(v), *v.logout_args], capture_output=True)

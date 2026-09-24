@@ -4,6 +4,7 @@ calls the same `Escrowe` object the CLI uses. Also serves the browser UI."""
 from __future__ import annotations
 
 import io
+import threading
 from pathlib import Path
 
 import pyarrow.ipc as ipc
@@ -12,7 +13,7 @@ from fastapi.responses import FileResponse, Response
 from fastapi.staticfiles import StaticFiles
 from pydantic import BaseModel
 
-from . import __version__
+from . import __version__, llm_login
 from .config import load_settings
 from .engines import EngineError
 from .guard import Denied
@@ -48,6 +49,12 @@ class ConnectBody(BaseModel):
     secret: str | None = None      # password, or a DuckLake token
 
 
+class LlmBody(BaseModel):
+    vendor: str
+    method: str                 # browser | api_key
+    api_key: str | None = None
+
+
 class NotebookBody(BaseModel):
     cells: list[dict]
     source: dict | None = None
@@ -81,6 +88,12 @@ def create_app(escrowe: Escrowe | None = None, local_operator: bool = False) -> 
             return svc.principal(token_from(authorization))
         except AuthError as e:
             raise HTTPException(401, str(e))
+
+    def operator(p: Principal = Depends(principal)) -> Principal:
+        """Some things change escrowe itself, not a session: only the operator may."""
+        if p.session is not None:
+            raise HTTPException(403, "Only the operator can do this.")
+        return p
 
     def run(fn):
         """Map service exceptions to HTTP status codes."""
@@ -128,6 +141,52 @@ def create_app(escrowe: Escrowe | None = None, local_operator: bool = False) -> 
     @app.get("/me")
     def me(p: Principal = Depends(principal)):
         return {"user": p.user, "operator": p.session is None}
+
+    # --------------------------------------------------------------- llm
+
+    @app.get("/llm")
+    def llm_status(p: Principal = Depends(principal)):
+        return svc.agent.status()
+
+    @app.post("/llm/connect")
+    def llm_connect(body: LlmBody, p: Principal = Depends(operator)):
+        """An API key is checked and stored here. A browser login is handed to
+        the vendor's CLI, which opens the sign-in tab; the agent is rebuilt
+        once it finishes, and the client polls /llm to see that happen."""
+        v = llm_login.vendor(body.vendor)
+
+        def chosen():
+            svc.store.set_setting(llm_login.VENDOR_SETTING, v.name)
+            svc.store.set_setting(llm_login.METHOD_SETTING, body.method)
+
+        if body.method == "api_key":
+            ok, why = llm_login.check_api_key(v, (body.api_key or "").strip())
+            if not ok:
+                raise HTTPException(400, f"That key was not accepted: {why}")
+            llm_login.save_api_key(svc.store, v, body.api_key)
+            chosen()
+            svc.reload_agent()
+            return svc.agent.status()
+        try:
+            proc = llm_login.browser_login_detached(v)
+        except RuntimeError as e:
+            raise HTTPException(400, str(e))
+        chosen()
+
+        def finish():
+            proc.wait()
+            svc.reload_agent()
+        threading.Thread(target=finish, daemon=True).start()
+        return {**svc.agent.status(), "pending": True}
+
+    @app.post("/llm/logout")
+    def llm_logout(p: Principal = Depends(operator)):
+        v = llm_login.vendor(llm_login.status(svc.store)["vendor"])
+        llm_login.forget_api_key(svc.store, v)
+        llm_login.browser_logout(v)
+        svc.store.set_setting(llm_login.VENDOR_SETTING, "")
+        svc.reload_agent()
+        return svc.agent.status()
 
     # ----------------------------------------------------------- queries
 
@@ -204,7 +263,9 @@ def create_app(escrowe: Escrowe | None = None, local_operator: bool = False) -> 
     if ui_dir.is_dir():
         @app.get("/", include_in_schema=False)
         def index():
-            return FileResponse(ui_dir / "index.html")
+            # Revalidate every load: after a reinstall the browser must not keep
+            # showing the interface it cached from the previous version.
+            return FileResponse(ui_dir / "index.html", headers={"Cache-Control": "no-cache"})
 
         app.mount("/static", StaticFiles(directory=str(ui_dir)), name="static")
 
