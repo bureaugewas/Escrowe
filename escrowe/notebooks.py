@@ -2,7 +2,7 @@
 
 A notebook is its cells (SQL or question text, chart settings, and the
 last result so reopening it needs no query and no agent call) plus,
-optionally, which database it was written against. Only the keys listed
+optionally, which database it was written against and its chart palette. Only the keys listed
 here survive a save, and a source's secrets are always stripped.
 """
 
@@ -93,9 +93,12 @@ class Notebooks:
             return None
         return json.loads(path.read_text())
 
-    def save(self, name: str, cells: list, source: dict | None, saved_by: str) -> dict:
+    def save(self, name: str, cells: list, source: dict | None, saved_by: str,
+             palette: str | None = None) -> dict:
         path = self._path(name)
-        doc = {"name": name, "cells": clean_cells(cells), "source": clean_source(source),
+        if palette is not None and (not isinstance(palette, str) or len(palette) > 40):
+            raise NotebookError("A notebook's palette is a short name.")
+        doc = {"name": name, "cells": clean_cells(cells), "source": clean_source(source), "palette": palette,
                "saved_at": time.strftime("%Y-%m-%dT%H:%M:%S"), "saved_by": saved_by}
         self.dir.mkdir(parents=True, exist_ok=True)
         tmp = path.with_suffix(".json.tmp")

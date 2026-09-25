@@ -940,9 +940,10 @@ window.addEventListener("resize",rerenderCharts);
 matchMedia("(prefers-color-scheme: dark)").addEventListener?.("change",()=>{ if(!savedTheme) setTheme(systemTheme(),false); });
 
 /* ------------------------------------------------ theme and chart colors */
-// Both are per-browser preferences, remembered in localStorage. "Default" is the
-// validated palette in the CSS (with its own light and dark steps); the others are
-// one set each, chosen to read on either background.
+// The theme is a per-browser preference, remembered in localStorage; the palette
+// belongs to the notebook and is saved with it. "Default" is the validated palette
+// in the CSS (with its own light and dark steps); the others are one set each,
+// chosen to read on either background.
 const PALETTES={
   Default:null,
   Pastel:["#8ab4f8","#f28b82","#81c995","#fdd663","#c58af9","#78d9ec","#fcad70","#ff8bcb"],
@@ -957,13 +958,14 @@ function setTheme(t,remember=true){
   document.documentElement.dataset.theme=t; if(remember){ savedTheme=t; pref("escrowe.theme",t); }
   rerenderCharts(); renderLayoutMenu();
 }
-function setPalette(name){
-  const cols=PALETTES[name]; if(name in PALETTES) pref("escrowe.palette",name);
+function setPalette(name,save=true){
+  if(!(name in PALETTES)) name="Default";
+  const cols=PALETTES[name]; S.nb.palette=name==="Default"?null:name; if(save) saveDraft();
   for(let i=1;i<=8;i++){ const p="--s"+i; cols?document.body.style.setProperty(p,cols[i-1]):document.body.style.removeProperty(p); }
   rerenderCharts(); renderLayoutMenu();
 }
 function renderLayoutMenu(){
-  const m=$("layoutMenu"), theme=document.documentElement.dataset.theme, pal=pref("escrowe.palette")||"Default";
+  const m=$("layoutMenu"), theme=document.documentElement.dataset.theme, pal=S.nb.palette||"Default";
   const open=[...m.querySelectorAll("details")].map(d=>d.open);
   const swatches=name=>(PALETTES[name]||[1,2,3,4,5,6,7,8].map(i=>cssVar("--s"+i,document.documentElement))).map(c=>`<i style="background:${c}"></i>`).join("");
   m.innerHTML=`<details${open[0]??true?" open":""}><summary>Theme</summary>
@@ -974,7 +976,6 @@ function renderLayoutMenu(){
 $("layoutBtn").onclick=e=>{ e.stopPropagation(); renderLayoutMenu(); $("layoutMenu").classList.toggle("hide"); };
 $("layoutMenu").onclick=e=>e.stopPropagation();   // picking an option re-renders it; stay open
 document.addEventListener("click",()=>$("layoutMenu").classList.add("hide"));
-setPalette(pref("escrowe.palette")||"Default");
 
 /* ---------------------------------------------------------- markdown */
 function inline(s){
@@ -1014,7 +1015,7 @@ function cleanCells(){ return S.nb.cells.map(c=>{ const {type,x,y,color,size,vie
   return {id:c.id,kind:c.kind,title:c.title||"",text:c.text||"",chart:{type:type||"auto",x,y,color,size,view:view||null,span,h},
           result:c.result||null}; }); }
 let draftT; function saveDraft(){ fitName(); clearTimeout(draftT); draftT=setTimeout(()=>{
-  try{ localStorage.setItem(DRAFT_KEY,JSON.stringify({name:$("nbName").value,cells:cleanCells()})); }catch{}
+  try{ localStorage.setItem(DRAFT_KEY,JSON.stringify({name:$("nbName").value,cells:cleanCells(),palette:S.nb.palette||null})); }catch{}
   autoSaveNotebook();
 },400); }
 // No manual save required: whatever's being worked on saves itself to the server a
@@ -1029,12 +1030,12 @@ function autoSaveNotebook(){
     name=`Untitled ${new Date().toISOString().slice(0,16).replace("T","-").replace(":","-")}`;
     $("nbName").value=name;
   }
-  api("/notebooks/"+encodeURIComponent(name),{method:"PUT",body:{cells:cleanCells(),source:S.nb.source||null}})
+  api("/notebooks/"+encodeURIComponent(name),{method:"PUT",body:{cells:cleanCells(),source:S.nb.source||null,palette:S.nb.palette||null}})
     .then(d=>{ $("saveMsg").textContent=`saved ${d.saved_at.slice(11,16)}`; loadNbSidebar(); })
     .catch(e=>{ $("saveMsg").innerHTML=`<span style="color:var(--bad)">${esc(e.message)}</span>`; });
 }
 function loadDraft(){
-  try{ const d=JSON.parse(localStorage.getItem(DRAFT_KEY)||"null"); if(d?.cells?.length){ S.nb.cells=d.cells; $("nbName").value=d.name||""; } }catch{}
+  try{ const d=JSON.parse(localStorage.getItem(DRAFT_KEY)||"null"); if(d?.cells?.length){ S.nb.cells=d.cells; $("nbName").value=d.name||""; setPalette(d.palette,false); } }catch{}
 }
 // Browsers without CSS field-sizing: fit the field to the whole name by hand.
 function fitName(){ const n=$("nbName"); n.size=Math.max(10,(n.value||n.placeholder).length+1); }
@@ -1053,7 +1054,7 @@ function sourceSig(s){ if(!s) return null; const {password,token,...rest}=s.para
 
 async function openNotebook(name){
   const d=await api("/notebooks/"+encodeURIComponent(name));
-  S.nb={name,cells:d.cells.map(c=>({...c,chart:c.chart||{type:"auto"}})),source:d.source||null}; S.results={};
+  S.nb={name,cells:d.cells.map(c=>({...c,chart:c.chart||{type:"auto"}})),source:d.source||null}; S.results={}; setPalette(d.palette,false);
   // Each cell's last result was saved alongside it: show it instantly, no query, no
   // agent call. A cell with nothing cached (added but never run before saving) just
   // shows "not run yet" - Run/Run all is one click away when a refresh is wanted.
@@ -1084,7 +1085,7 @@ async function loadNbSidebar(){
   }catch{ el.innerHTML=`<div class="dim">couldn't load</div>`; }
 }
 $("nbNewBtn").onclick=()=>{
-  S.nb={name:"",cells:[],source:null}; S.results={}; addCell("ask",false);
+  S.nb={name:"",cells:[],source:null}; S.results={}; setPalette(null,false); addCell("ask",false);
   $("nbName").value=""; $("saveMsg").textContent=""; renderAll(); saveDraft(); loadNbSidebar();
 };
 async function deleteNotebook(name){
