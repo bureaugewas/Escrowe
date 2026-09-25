@@ -333,6 +333,7 @@ function sourceFacts(src){
   const p=src.params||{}, k=src.kind, f=[["type",k]];
   if(k==="mysql"||k==="postgres"||k==="sqlserver") f.push(["host",p.host],["port",p.port],["user",p.user],["database",p.database]);
   else if(k==="ducklake") f.push(["quack",String(p.metadata||"").replace(/^quack:/,"")],["data path",p.data_path]);
+  else if(k==="iceberg") f.push(["endpoint",p.endpoint],["warehouse",p.warehouse],["client",p.client_id]);
   else f.push(["path",p.path]);
   return f.filter(([,v])=>v!==undefined&&v!==null&&v!=="");
 }
@@ -1002,12 +1003,23 @@ function ducklakeFields(pf){pf=pf||{};return `
   <label>Quack token</label><input id="dqtoken" type="password">
   <label>Data path <span class="dim"> - s3://…, r2://…; only needed the first time this catalog is used</span></label>
   <input id="dqdata" placeholder="s3://bucket/path" value="${esc(pf.data_path||"")}">`;}
+function icebergFields(pf){pf=pf||{};return `
+  <label>Catalog endpoint</label><input id="icend" value="${esc(pf.endpoint||"http://localhost:8181/api/catalog")}">
+  <label>Warehouse <span class="dim"> - the catalog's name on that server</span></label>
+  <input id="icwh" value="${esc(pf.warehouse||"")}">
+  <label>Bearer token <span class="dim"> - or leave empty and use client credentials below</span></label>
+  <input id="ictoken" type="password">
+  <label>Client ID</label><input id="iccid" value="${esc(pf.client_id||"")}">
+  <label>Client secret</label><input id="icsecret" type="password">
+  <label>OAuth2 token URL <span class="dim"> - optional; the catalog's own by default</span></label>
+  <input id="ictokurl" value="${esc(pf.oauth2_server_uri||"")}">`;}
 function duckdbFields(pf){return `
   <label>File path</label><input id="ddbpath" placeholder="/path/to/database.duckdb" value="${esc((pf||{}).path||"")}">`;}
 function sqliteFields(pf){return `
   <label>File path</label><input id="dsqpath" placeholder="/path/to/database.sqlite" value="${esc((pf||{}).path||"")}">`;}
 function kindFields(kind,pf){
   if(kind==="ducklake") return ducklakeFields(pf);
+  if(kind==="iceberg") return icebergFields(pf);
   if(kind==="duckdb") return duckdbFields(pf);
   if(kind==="sqlite") return sqliteFields(pf);
   if(kind==="postgres") return dbFields("d",5432,pf);
@@ -1031,6 +1043,7 @@ function openConnect(prefill,forNotebook){
       <select id="kind" style="width:100%;padding:9px 10px;font-size:inherit">
         <option value="mysql">MySQL</option><option value="postgres">PostgreSQL</option>
         <option value="sqlserver">SQL Server</option><option value="ducklake">DuckLake</option>
+        <option value="iceberg">Iceberg REST catalog</option>
         <option value="duckdb">DuckDB (local file)</option>
         <option value="sqlite">SQLite (local file)</option></select>
       <label>Name in SQL</label><input id="sname" value="${esc(pf.name||"mysql")}">
@@ -1065,6 +1078,10 @@ function collect(){
     params={metadata:"quack:"+v("dqhost")};
     if(v("dqtoken")) params.token=v("dqtoken");
     if(v("dqdata")) params.data_path=v("dqdata");
+  }else if(kind==="iceberg"){
+    const o={endpoint:v("icend"),warehouse:v("icwh"),token:v("ictoken"),client_id:v("iccid"),
+             client_secret:v("icsecret"),oauth2_server_uri:v("ictokurl")};
+    params=Object.fromEntries(Object.entries(o).filter(([,x])=>x!==""));
   }else if(kind==="duckdb"){
     params={path:v("ddbpath")};
   }else if(kind==="sqlite"){

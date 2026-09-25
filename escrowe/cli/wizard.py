@@ -56,6 +56,8 @@ def connect_database(conn: LocalConnection, persist: bool = False) -> None:
 def ask_connection(kind: str) -> tuple[str, dict]:
     if kind == "ducklake":
         return "lake", _ducklake_params()
+    if kind == "iceberg":
+        return "lake", _iceberg_params()
     if kind in ("duckdb", "sqlite"):
         path = typer.prompt("File path", default=str(Path.cwd() / f"database.{kind}"))
         return kind, {"path": str(Path(path).expanduser())}
@@ -89,6 +91,25 @@ def _ducklake_params() -> dict:
                              default="", show_default=False).strip()
     if data_path:
         params["data_path"] = data_path
+    return params
+
+
+def _iceberg_params() -> dict:
+    """Any Iceberg REST catalog; it authenticates with a bearer token or with
+    OAuth2 client credentials, whichever identity provider issued them."""
+    params = {"endpoint": typer.prompt("Catalog endpoint", default="http://localhost:8181/api/catalog"),
+              "warehouse": typer.prompt("Warehouse (catalog name)")}
+    client_id = typer.prompt("Client ID (leave empty to use a bearer token)", default="",
+                             show_default=False).strip()
+    if client_id:
+        params["client_id"] = client_id
+        params["client_secret"] = typer.prompt("Client secret", hide_input=True).strip()
+        token_url = typer.prompt("OAuth2 token URL (empty: the catalog's own)", default="",
+                                 show_default=False).strip()
+        if token_url:
+            params["oauth2_server_uri"] = token_url
+    else:
+        params["token"] = typer.prompt("Bearer token", hide_input=True).strip()
     return params
 
 

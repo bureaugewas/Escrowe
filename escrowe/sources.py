@@ -13,6 +13,8 @@ Connection string forms accepted by `parse_dsn`:
     ducklake:/path/to/catalog.duckdb
     ducklake:postgres:dbname=lake host=...                 DuckLake's own ATTACH syntax
     ducklake:quack:host:port?token=...
+    iceberg:https://host/api/catalog?warehouse=...&token=...           any Iceberg REST catalog
+    iceberg:https://host/api/catalog?warehouse=...&client_id=...&client_secret=...
 
 Any form takes `?data_path=...`. A leading `name=` names the source.
 """
@@ -25,8 +27,9 @@ from urllib.parse import parse_qsl, unquote, urlparse
 
 from . import engines
 
-SECRET_KEYS = ("password", "token")   # a token authenticates a hosted DuckLake catalog
-DEFAULT_NAMES = {"ducklake": "lake"}
+SECRET_KEYS = ("password", "token", "client_secret")   # tokens and client secrets authenticate catalogs
+DEFAULT_NAMES = {"ducklake": "lake", "iceberg": "lake"}
+ICEBERG_KEYS = ("warehouse", "token", "client_id", "client_secret", "oauth2_server_uri", "scope")
 FILE_KINDS = ("sqlite", "duckdb")
 
 
@@ -39,6 +42,13 @@ class Source:
     @property
     def user(self) -> str | None:
         return self.params.get("user")
+
+    @property
+    def secret_key(self) -> str:
+        """Which param holds this source's secret, the one never written to disk."""
+        if self.kind == "iceberg" and self.params.get("client_id"):
+            return "client_secret"
+        return "token" if self.kind in ("ducklake", "iceberg") else "password"
 
     def redacted(self) -> dict:
         """Safe to log or return over the API."""
@@ -112,6 +122,10 @@ def parse_dsn(dsn: str, name: str | None = None) -> Source:
         params = {"metadata": spec}
         if extra.get("token"):
             params["token"] = extra["token"]
+    elif kind == "iceberg":
+        params = {"endpoint": spec, **{k: v for k, v in extra.items() if k in ICEBERG_KEYS}}
+        if not params.get("warehouse"):
+            raise ValueError("iceberg connection string needs ?warehouse=<catalog name>")
     elif kind in FILE_KINDS:
         params = {"path": spec.removeprefix("//")}
     else:
