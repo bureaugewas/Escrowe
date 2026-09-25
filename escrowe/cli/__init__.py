@@ -26,6 +26,7 @@ import typer
 from .. import __version__, llm_login
 from ..client import Connection, EscroweAuthError, EscroweDenied, EscroweError, connect, embedded
 from ..config import home_dir, load_settings
+from ..engines import EngineError
 from . import repl, wizard
 from .console import BLUE, NAME, console
 
@@ -188,7 +189,16 @@ def _open(local: bool, dsn: str | None, user: str | None, password: str | None):
     if local:
         conn = embedded(load_settings(), operator=True)
         src = conn.svc.source
-        if src is not None and conn.svc.engine is None:
+        if src is not None and conn.svc.engine is None and src.secret_key == "token":
+            # A catalog token was not kept either; it is the whole credential.
+            try:
+                token = password or typer.prompt("token", hide_input=True)
+                conn.svc.connect_saved(src.name, token)
+            except (EOFError, KeyboardInterrupt, typer.Abort):
+                raise EscroweAuthError("No token on file; pass --password or set ESCROWE_PASSWORD.")
+            except EngineError as e:
+                raise EscroweAuthError(str(e))
+        elif src is not None and conn.svc.engine is None:
             # Saved by `escrowe connect`, but the password was not kept: ask for what is missing.
             try:
                 user = user or src.user or typer.prompt("user")
