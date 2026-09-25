@@ -193,3 +193,7 @@ ruff check .
 ```
 
 MIT licensed.
+
+## Medium Articles
+https://medium.com/@jurjen.v.genugten/your-ai-agent-doesnt-need-to-see-your-data-19fe4956cd34?sharedUserId=jurjen.v.genugten
+https://medium.com/@jurjen.v.genugten/data-spillage-in-the-age-of-ai-analysts-64ee4000331c?sharedUserId=jurjen.v.genugten
