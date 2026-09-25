@@ -142,6 +142,12 @@ bearer tokens and the password is dropped after the connection opens.
 | SQLite | `sqlite:/path/to/file.sqlite` | stdlib |
 | DuckDB | `duckdb:/path/to/file.duckdb` | duckdb |
 | DuckLake | `ducklake:/catalog.duckdb`, `ducklake:quack:host:port?token=…` | duckdb |
+| Iceberg REST catalog | `iceberg:https://host/api/catalog?warehouse=…&token=…`, or `…&client_id=…&client_secret=…` | duckdb |
+
+An Iceberg catalog (Polaris, Lakekeeper, Nessie, Unity Catalog, ...) is
+authenticated with a bearer token or OAuth2 client credentials, from any
+identity provider. `escrowe login` takes the client ID as the user and its
+secret as the password, so each person connects as their own principal.
 
 Adding a kind is one module in `escrowe/engines/` plus a registry entry; see
 [CONTRIBUTING.md](CONTRIBUTING.md).

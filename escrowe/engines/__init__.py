@@ -5,6 +5,7 @@ from __future__ import annotations
 
 from .base import Column, DBAPIEngine, DirectEngine, EngineError
 from .ducklake import DuckDBEngine, DuckLakeEngine
+from .iceberg import IcebergEngine
 from .mysql import MySQLEngine
 from .postgres import PostgresEngine
 from .sqlite import SQLiteEngine
@@ -17,6 +18,7 @@ REGISTRY: dict[str, type[DirectEngine]] = {
     "sqlite": SQLiteEngine,
     "duckdb": DuckDBEngine,
     "ducklake": DuckLakeEngine,
+    "iceberg": IcebergEngine,
 }
 
 

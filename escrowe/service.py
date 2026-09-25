@@ -196,14 +196,14 @@ class Escrowe:
         return {"name": src.name, "kind": src.kind, "tables": [t.fqn for t in self._schemas[id(engine)]]}
 
     def connect_saved(self, name: str, secret: str | None = None) -> dict:
-        """Make a saved source the active one. A password (or DuckLake token)
-        is never on disk, so it is supplied here when the kind needs one."""
+        """Make a saved source the active one. A password, token or client
+        secret is never on disk, so it is supplied here when the kind needs one."""
         row = self.store.source(name)
         if row is None:
             raise ValueError(f"No saved source named {name!r}.")
         src = Source.from_row(row["name"], row["kind"], row["params"])
         if secret:
-            src.params["token" if src.kind == "ducklake" else "password"] = secret
+            src.params[src.secret_key] = secret
         return self.set_source(src)
 
     def remove_source(self, name: str | None = None) -> None:

@@ -35,7 +35,7 @@ READ_STATEMENTS = (exp.Select, exp.Union, exp.Except, exp.Intersect)
 # Kinds sqlglot has a dialect for parse with it; anything else parses
 # generically, which suffices for the one thing checked here: statement shape.
 _SQLGLOT_DIALECTS = {"mysql", "postgres", "duckdb", "sqlite", "snowflake", "bigquery", "tsql"}
-_DIALECT_ALIASES = {"sqlserver": "tsql", "ducklake": "duckdb"}
+_DIALECT_ALIASES = {"sqlserver": "tsql", "ducklake": "duckdb", "iceberg": "duckdb"}
 
 # Checked on the raw text, so it stays denied even if a future sqlglot
 # release learns to parse the syntax.

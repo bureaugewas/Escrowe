@@ -58,6 +58,7 @@ class LlmBody(BaseModel):
 class NotebookBody(BaseModel):
     cells: list[dict]
     source: dict | None = None
+    palette: str | None = None
 
 
 def create_app(escrowe: Escrowe | None = None, local_operator: bool = False) -> FastAPI:
@@ -249,7 +250,8 @@ def create_app(escrowe: Escrowe | None = None, local_operator: bool = False) -> 
 
     @app.put("/notebooks/{name}")
     def put_notebook(name: str, body: NotebookBody, p: Principal = Depends(principal)):
-        doc = run(lambda: notebooks.save(name, body.cells, body.source, saved_by=p.user))
+        doc = run(lambda: notebooks.save(name, body.cells, body.source, saved_by=p.user,
+                                                    palette=body.palette))
         return {"ok": True, "name": name, "cells": len(doc["cells"]), "saved_at": doc["saved_at"]}
 
     @app.delete("/notebooks/{name}")
