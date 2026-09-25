@@ -344,7 +344,7 @@ async function loadSchema(){
   try{
     const [srcs,health]=await Promise.all([api("/sources"),api("/health",{auth:false})]); h=health;
     META={sources:srcs.sources,source:h.source,connected:!!h.connected,schemas:new Map()};
-    if(!META.sources.length){ $("schema").innerHTML=`<div class="dim">none yet - <a href="#" onclick="openConnect();return false">connect one</a>.</div>`; return h; }
+    if(!META.sources.length){ $("schema").innerHTML=`<div class="dim"><i>None</i></div>`; return h; }
     const d=h.connected?await api("/metadata"):{tables:[]};
     // Group by schema (the part of "schema.table" before the dot; a table with no
     // dot is in the implicit "main" schema).
