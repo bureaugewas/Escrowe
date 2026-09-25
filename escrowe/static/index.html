@@ -315,7 +315,7 @@ let S={token:null,user:null,idleAt:0,present:false,nb:{name:"",cells:[],source:n
 const IDLE_MS=30*60*1000, DRAFT_KEY="escrowe.notebook.draft";
 const uid=()=>Math.random().toString(36).slice(2,10);
 const HAS_PLOT=typeof Plot!=="undefined"&&typeof d3!=="undefined";
-const DEFAULT_VIEW="table";   // a fresh result shows its table first; Chart is one click away
+const DEFAULT_VIEW="chart";   // a fresh result shows its chart when there is one; Table is one click away
 
 async function api(path,{method="GET",body,auth=true}={}){
   const h={"Content-Type":"application/json"};
@@ -750,10 +750,8 @@ function renderOut(id){
     out.innerHTML=`<div class="dim sqlnote">from the schema</div><pre>${esc(r.answer)}</pre>`; return;
   }
   const sp=spec(c,r), canChart=HAS_PLOT||sp.type==="stat"||sp.type==="table";
-  // No explicit choice yet: a table is the honest default (a chart is a claim about
-  // what the data means), except a single aggregate number, where the stat tile
-  // *is* the natural, only-good representation - not really a chart/table choice.
-  const view=c.chart?.view||(sp.type==="stat"?"chart":DEFAULT_VIEW);
+  // No explicit choice yet: the suggested chart, or the table when nothing charts.
+  const view=c.chart?.view||DEFAULT_VIEW;
   const showChart=view==="chart"&&sp.type!=="table"&&canChart;
   const notes=[]; if(r.attempts>1) notes.push(`${r.attempts} attempts`);
   out.innerHTML=
