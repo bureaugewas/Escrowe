@@ -152,6 +152,13 @@
   th,td{border:1px solid var(--line);padding:5px 9px;text-align:left;white-space:nowrap}
   td.num{text-align:right;font-variant-numeric:tabular-nums}
   th{background:var(--panel2);color:var(--dim);position:sticky;top:0}
+  /* Result grid: every column starts at the same width; drag a header's edge to resize. */
+  .gridWrap{overflow:auto;max-height:52vh;margin-top:10px}
+  .gridWrap table{display:table;table-layout:fixed;width:auto;margin:0;overflow:visible;max-height:none}
+  .gridWrap th,.gridWrap td{overflow:hidden;text-overflow:ellipsis}
+  .gridWrap th{padding-right:14px}
+  .gridWrap .grip{position:absolute;top:0;right:-3px;width:7px;height:100%;cursor:col-resize;z-index:1}
+  .gridWrap .grip:hover,.gridWrap .grip.on{background:var(--accent);opacity:.5}
   pre{background:var(--panel2);border:1px solid var(--line);border-radius:8px;padding:10px;
       overflow:auto;font-size:12px;white-space:pre-wrap;margin:8px 0 0}
   .banner{border-radius:8px;padding:9px 12px;margin-top:10px;font-size:13px}
@@ -778,11 +785,22 @@ function renderOut(id){
 }
 function setView(id,v){ const c=cell(id); c.chart={...(c.chart||{}),view:v}; renderOut(id); saveDraft(); }
 function tableEl(r){
-  const t=document.createElement("table");
-  t.innerHTML=`<thead><tr>${r.columns.map(c=>`<th>${esc(c.name)}</th>`).join("")}</tr></thead><tbody>`
-    + r.rows.slice(0,500).map(row=>`<tr>${row.map((v,i)=>`<td class="${r.columns[i].type==="number"?"num":""}">${esc(v)}</td>`).join("")}</tr>`).join("")
+  const wrap=document.createElement("div"); wrap.className="gridWrap";
+  const cols=r.columns.map(()=>COL_W), t=document.createElement("table");
+  const fit=()=>{ t.style.width=cols.reduce((a,b)=>a+b,0)+"px"; };
+  t.innerHTML=`<colgroup>${cols.map(w=>`<col style="width:${w}px">`).join("")}</colgroup>`
+    + `<thead><tr>${r.columns.map(c=>`<th title="${esc(c.name)}">${esc(c.name)}<span class="grip"></span></th>`).join("")}</tr></thead><tbody>`
+    + r.rows.slice(0,500).map(row=>`<tr>${row.map((v,i)=>`<td class="${r.columns[i].type==="number"?"num":""}" title="${esc(v)}">${esc(v)}</td>`).join("")}</tr>`).join("")
     + `</tbody>`;
-  return t;
+  const colEls=t.querySelectorAll("col");
+  t.querySelectorAll(".grip").forEach((g,i)=>g.onpointerdown=e=>{
+    e.preventDefault(); g.setPointerCapture(e.pointerId); g.classList.add("on");
+    const x0=e.clientX, w0=cols[i];
+    g.onpointermove=m=>{ cols[i]=Math.max(COL_MIN,w0+m.clientX-x0); colEls[i].style.width=cols[i]+"px"; fit(); };
+    g.onpointerup=()=>{ g.onpointermove=g.onpointerup=null; g.classList.remove("on"); };
+  });
+  fit(); wrap.appendChild(t);
+  return wrap;
 }
 function downloadCsv(id){
   const r=S.results[id], q=v=>`"${String(v??"").replace(/"/g,'""')}"`;
@@ -795,6 +813,7 @@ function toggleCfg(id,force){
   const c=cell(id), r=S.results[id], el=document.querySelector(`[data-id="${id}"] .cfg`); if(!r||!el) return;
   const open=force===true?true:el.classList.contains("hide"); c._cfgOpen=open;
   el.classList.toggle("hide",!open); if(!open) return;
+const COL_W=160, COL_MIN=40;
   const cfg=c.chart||{}, sp=spec(c,r), types=["auto","bar","line","area","scatter","stat","table"];
   const opt=(cur,allowNone)=>(allowNone?`<option value="">–</option>`:"")+r.columns.map(k=>
     `<option value="${esc(k.name)}"${k.name===cur?" selected":""}>${esc(k.name)} (${k.type})</option>`).join("");
