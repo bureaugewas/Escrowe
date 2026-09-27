@@ -291,6 +291,15 @@ class Escrowe:
         engine = self.engine_for(principal)
         return self._schemas.get(id(engine)) if engine is not None else None
 
+    def refresh_schema(self, principal: Principal) -> list[TableMeta] | None:
+        """Read this principal's catalog again, on a person's request, so
+        tables created or renamed since connecting show up."""
+        engine = self.engine_for(principal)
+        if engine is None:
+            return None
+        self._schemas[id(engine)] = read_schema(engine)
+        return self._schemas[id(engine)]
+
     # ------------------------------------------------------------- queries
 
     def sql(self, principal: Principal, sql: str, *, mode: str = "sql", question: str | None = None,

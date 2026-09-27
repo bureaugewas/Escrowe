@@ -390,13 +390,14 @@ function sourceFacts(src){
 
 // The sidebar tree, DuckDB-style: every saved database is a root; the active
 // one carries its schemas and tables, the others sit dimmed until reconnected.
-async function loadSchema(){
+// fresh: re-read the database's catalog instead of the snapshot taken on connect.
+async function loadSchema(fresh=false){
   let h={};
   try{
     const [srcs,health]=await Promise.all([api("/sources"),api("/health",{auth:false})]); h=health;
     META={sources:srcs.sources,source:h.source,connected:!!h.connected,schemas:new Map()};
     if(!META.sources.length){ $("schema").innerHTML=`<div class="dim"><i>None</i></div>`; return h; }
-    const d=h.connected?await api("/metadata"):{tables:[]};
+    const d=!h.connected?{tables:[]}:fresh?await api("/metadata/refresh",{method:"POST"}):await api("/metadata");
     // Group by schema (the part of "schema.table" before the dot; a table with no
     // dot is in the implicit "main" schema).
     for(const t of d.tables){
@@ -514,7 +515,7 @@ function queryTable(fqn){
   c.text=`SELECT *\nFROM ${fqn}\nLIMIT 100`; renderAll(); saveDraft();
   document.querySelector(`[data-id="${c.id}"] textarea`)?.focus();
 }
-$("refreshMeta").onclick=loadSchema; $("dbAddBtn").onclick=()=>openConnect(); $("llmBtn").onclick=openLlm;
+$("refreshMeta").onclick=()=>loadSchema(true); $("dbAddBtn").onclick=()=>openConnect(); $("llmBtn").onclick=openLlm;
 $("sbBtn").onclick=()=>{ $("sidebarcol").classList.toggle("hide"); $("sbResizer").classList.toggle("hide"); rerenderCharts(); };
 
 /* ------------------------------------------------------------ cells */
