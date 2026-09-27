@@ -573,7 +573,7 @@ function renderCell(id){
     </div>
     <div class="editor">
       <textarea class="${c.kind==="sql"?"code":""}" placeholder="${esc(PLACEHOLDER[c.kind])}"
-        oninput="onEdit('${id}',this)" onkeydown="if((event.metaKey||event.ctrlKey)&&event.key==='Enter'){event.preventDefault();runCell('${id}')}"></textarea>
+        oninput="onEdit('${id}',this)" onkeydown="cellKey(event,'${id}')"></textarea>
     </div>
     <div class="out"></div>
     <div class="grip" title="Drag to resize" onmousedown="startResize(event,'${id}')"></div>`;
@@ -618,6 +618,24 @@ function dropCell(e,id){
 }
 function autosize(ta){ ta.style.height="auto"; ta.style.height=Math.min(Math.max(ta.scrollHeight+2,74),420)+"px"; }
 function onEdit(id,ta){ const c=cell(id); c.text=ta.value; autosize(ta); if(c.kind==="md") renderOut(id); saveDraft(); }
+// Cmd/Ctrl+Enter runs. In a SQL cell Tab indents and Shift+Tab outdents the
+// selected lines; Escape leaves the editor so Tab moves focus again.
+const INDENT="  ";
+function cellKey(e,id){
+  const ta=e.target;
+  if((e.metaKey||e.ctrlKey)&&e.key==="Enter"){ e.preventDefault(); runCell(id); return; }
+  if(e.key==="Escape"){ ta.blur(); return; }
+  if(e.key!=="Tab"||cell(id).kind!=="sql") return;
+  e.preventDefault();
+  const v=ta.value, {selectionStart:a,selectionEnd:b}=ta;
+  if(!e.shiftKey&&a===b){ document.execCommand("insertText",false,INDENT); return; }
+  const from=v.lastIndexOf("\n",a-1)+1, lines=v.slice(from,b).split("\n");
+  const out=lines.map(l=>e.shiftKey?l.replace(new RegExp(`^ {1,${INDENT.length}}`),""):INDENT+l);
+  ta.setSelectionRange(from,b);
+  document.execCommand("insertText",false,out.join("\n"));   // keeps undo working
+  const shift=out[0].length-lines[0].length;
+  ta.setSelectionRange(Math.max(from,a+shift),from+out.join("\n").length);
+}
 
 /* ---------------------------------------------------------- running */
 async function runCell(id){
@@ -784,6 +802,7 @@ function renderOut(id){
   if(c._cfgOpen) toggleCfg(id,true);
 }
 function setView(id,v){ const c=cell(id); c.chart={...(c.chart||{}),view:v}; renderOut(id); saveDraft(); }
+const COL_W=160, COL_MIN=40;
 function tableEl(r){
   const wrap=document.createElement("div"); wrap.className="gridWrap";
   const cols=r.columns.map(()=>COL_W), t=document.createElement("table");
@@ -813,7 +832,6 @@ function toggleCfg(id,force){
   const c=cell(id), r=S.results[id], el=document.querySelector(`[data-id="${id}"] .cfg`); if(!r||!el) return;
   const open=force===true?true:el.classList.contains("hide"); c._cfgOpen=open;
   el.classList.toggle("hide",!open); if(!open) return;
-const COL_W=160, COL_MIN=40;
   const cfg=c.chart||{}, sp=spec(c,r), types=["auto","bar","line","area","scatter","stat","table"];
   const opt=(cur,allowNone)=>(allowNone?`<option value="">–</option>`:"")+r.columns.map(k=>
     `<option value="${esc(k.name)}"${k.name===cur?" selected":""}>${esc(k.name)} (${k.type})</option>`).join("");
