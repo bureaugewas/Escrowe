@@ -20,12 +20,14 @@
         --accent:#6cb6ff;--ok:#3fcf8e;--bad:#ff6b6b;--warn:#ffb347;--radius:10px;
         /* chart series (validated categorical order, dark steps) */
         --s1:#3987e5;--s2:#d95926;--s3:#199e70;--s4:#c98500;--s5:#d55181;--s6:#008300;--s7:#9085e9;--s8:#e66767;
-        --grid:#2c2c2a}
+        --grid:#2c2c2a;
+        /* SQL highlighting */
+        --hk:#6cb6ff;--hs:#8ddb8c;--hn:#f0a868;--hf:#c7a2ff;--hc:#768390}
   /* data-theme is always set (see the script below): the saved choice, else the system's */
   :root[data-theme="light"]{--bg:#f6f8fa;--panel:#fff;--panel2:#f0f3f6;
         --line:#d8dee4;--text:#1f2933;--dim:#5c6b7a;--accent:#0b62d6;
         --s1:#2a78d6;--s2:#eb6834;--s3:#1baf7a;--s4:#eda100;--s5:#e87ba4;--s6:#008300;--s7:#4a3aa7;--s8:#e34948;
-        --grid:#e1e0d9}
+        --grid:#e1e0d9;--hk:#0b5cc4;--hs:#1a7f37;--hn:#b35900;--hf:#7c3aed;--hc:#6e7781}
   *{box-sizing:border-box}
   body{margin:0;background:var(--bg);color:var(--text);font:14px/1.5 -apple-system,"Segoe UI",Roboto,sans-serif}
   button{background:var(--accent);color:#fff;border:0;padding:8px 14px;border-radius:8px;cursor:pointer;
@@ -40,6 +42,16 @@
   select{width:auto;padding:4px 8px;font-size:12px}
   textarea{resize:vertical;min-height:74px}
   textarea.code{font:12.5px/1.45 ui-monospace,SFMono-Regular,Menlo,monospace}
+  /* A highlighted editor: the colored text is a <pre> behind a textarea whose own
+     text is transparent, so typing, selection and undo stay the browser's own. */
+  .hl{position:relative}
+  .hl pre{position:absolute;inset:0;margin:0;overflow:hidden;pointer-events:none;
+          font:12.5px/1.45 ui-monospace,SFMono-Regular,Menlo,monospace;padding:9px 10px;overflow-wrap:break-word}
+  .hl textarea{position:relative;background:transparent;color:transparent;caret-color:var(--text)}
+  .hl textarea::placeholder{color:var(--dim)}
+  .tk{color:var(--hk);font-weight:600}.ts{color:var(--hs)}.tn{color:var(--hn)}.tf{color:var(--hf)}.tc{color:var(--hc);font-style:italic}
+  .sqlnote summary{cursor:pointer}
+  .sqlnote .row{display:flex;gap:10px;align-items:center;margin-top:6px}
   label{display:block;margin:10px 0 4px;color:var(--dim);font-size:12px}
   .panel{background:var(--panel);border:1px solid var(--line);border-radius:var(--radius);padding:16px}
   .row{display:flex;gap:8px;flex-wrap:wrap;align-items:center}
@@ -262,6 +274,7 @@
       <span>⌘K</span>
     </label>
     <span class="dim edit-only" id="idle"></span>
+    <button class="ghost sm edit-only" id="clearCtxBtn" title="Forget earlier questions and their SQL, so the next question starts fresh">Clear context</button>
     <button class="ghost sm edit-only" id="refreshAllBtn" title="Rerun every cell's last query - no agent call">Refresh data</button>
     <button class="ghost sm" id="runAllBtn">Run all</button>
     <button class="ghost sm edit-only" id="auditBtn">Audit</button>
@@ -577,7 +590,7 @@ function renderCell(id){
     </div>
     <div class="out"></div>
     <div class="grip" title="Drag to resize" onmousedown="startResize(event,'${id}')"></div>`;
-  const ta=el.querySelector("textarea"); ta.value=c.text; autosize(ta);
+  const ta=el.querySelector("textarea"); ta.value=c.text; if(c.kind==="sql") highlight(ta); autosize(ta);
   el.draggable=S.present; el.ondragstart=e=>dragCell(e,id); el.ondragover=e=>{e.preventDefault();el.classList.add("dropTarget")};
   el.ondragleave=()=>el.classList.remove("dropTarget"); el.ondrop=e=>dropCell(e,id);
   applySpan(id);
@@ -618,14 +631,16 @@ function dropCell(e,id){
 }
 function autosize(ta){ ta.style.height="auto"; ta.style.height=Math.min(Math.max(ta.scrollHeight+2,74),420)+"px"; }
 function onEdit(id,ta){ const c=cell(id); c.text=ta.value; autosize(ta); if(c.kind==="md") renderOut(id); saveDraft(); }
-// Cmd/Ctrl+Enter runs. In a SQL cell Tab indents and Shift+Tab outdents the
+// Cmd/Ctrl+Enter runs. In SQL Tab indents and Shift+Tab outdents the
 // selected lines; Escape leaves the editor so Tab moves focus again.
 const INDENT="  ";
-function cellKey(e,id){
+function cellKey(e,id){ editorKey(e,()=>runCell(id),cell(id).kind==="sql"); }
+function askSqlKey(e,id){ editorKey(e,()=>runEdited(id),true); }
+function editorKey(e,run,indent){
   const ta=e.target;
-  if((e.metaKey||e.ctrlKey)&&e.key==="Enter"){ e.preventDefault(); runCell(id); return; }
+  if((e.metaKey||e.ctrlKey)&&e.key==="Enter"){ e.preventDefault(); run(); return; }
   if(e.key==="Escape"){ ta.blur(); return; }
-  if(e.key!=="Tab"||cell(id).kind!=="sql") return;
+  if(e.key!=="Tab"||!indent) return;
   e.preventDefault();
   const v=ta.value, {selectionStart:a,selectionEnd:b}=ta;
   if(!e.shiftKey&&a===b){ document.execCommand("insertText",false,INDENT); return; }
@@ -637,6 +652,32 @@ function cellKey(e,id){
   ta.setSelectionRange(Math.max(from,a+shift),from+out.join("\n").length);
 }
 
+/* ------------------------------------------------------ highlighting */
+const SQL_KW=new Set(`SELECT FROM WHERE AND OR NOT IN IS NULL AS ON JOIN LEFT RIGHT INNER OUTER FULL CROSS
+  GROUP BY ORDER HAVING LIMIT OFFSET TOP DISTINCT UNION ALL EXCEPT INTERSECT WITH RECURSIVE CASE WHEN THEN
+  ELSE END ASC DESC LIKE ILIKE BETWEEN EXISTS OVER PARTITION ROWS RANGE CAST TRUE FALSE INSERT INTO VALUES
+  UPDATE SET DELETE CREATE TABLE VIEW DROP ALTER USING NATURAL LATERAL QUALIFY FILTER WINDOW INTERVAL
+  PIVOT UNPIVOT FETCH FIRST NEXT ONLY NULLS LAST`.split(/\s+/));
+// comment | string | quoted identifier | number | word, and whether a "(" follows it
+const SQL_TOKEN=/(--[^\n]*|\/\*[\s\S]*?(?:\*\/|$))|('(?:[^']|'')*'?)|("(?:[^"]|"")*"?|`[^`]*`?)|(\b\d+(?:\.\d+)?\b)|([A-Za-z_][\w$]*)(?=(\s*\()?)/g;
+function highlightSql(src){
+  let html="", at=0;
+  for(const m of src.matchAll(SQL_TOKEN)){
+    const [t,comment,str,,num,word,call]=m;
+    const cls=comment?"tc":str?"ts":num?"tn":word&&SQL_KW.has(word.toUpperCase())?"tk":word&&call?"tf":"";
+    html+=esc(src.slice(at,m.index))+(cls?`<span class="${cls}">${esc(t)}</span>`:esc(t)); at=m.index+t.length;
+  }
+  return html+esc(src.slice(at));
+}
+function highlight(ta){
+  const wrap=document.createElement("div"), pre=document.createElement("pre");
+  wrap.className="hl"; pre.setAttribute("aria-hidden","true"); ta.spellcheck=false;
+  ta.before(wrap); wrap.append(pre,ta);
+  const paint=()=>{ pre.innerHTML=highlightSql(ta.value)+"\n"; pre.scrollTop=ta.scrollTop; };
+  ta.addEventListener("input",paint); ta.addEventListener("scroll",()=>{ pre.scrollTop=ta.scrollTop; });
+  paint();
+}
+
 /* ---------------------------------------------------------- running */
 async function runCell(id){
   const c=cell(id), el=document.querySelector(`[data-id="${id}"]`); if(!c||c.kind==="md") return;
@@ -644,8 +685,11 @@ async function runCell(id){
   touch(); el.classList.add("running");
   el.querySelector(".out").innerHTML=`<div class="dim">${c.kind==="ask"?"the agent is writing a query":"running"} <span class="spin"></span></div>`;
   try{
-    const r=await api(c.kind==="ask"?"/ask":"/sql",{method:"POST",body:c.kind==="ask"?{question:text}:{sql:text}});
-    S.results[id]=analyze(r); c.result=r;      // cached and saved, so reopening needs no query/agent call
+    // A question goes with the SQL its cell holds now, edited or not, so a
+    // reworded question revises that query instead of starting over.
+    const r=await api(c.kind==="ask"?"/ask":"/sql",{method:"POST",
+      body:c.kind==="ask"?{question:text,sql:c._sql??c.result?.sql}:{sql:text}});
+    S.results[id]=analyze(r); c.result=r; delete c._sql;   // cached and saved, so reopening needs no query/agent call
   }catch(err){ failed(id,err); }
   el.classList.remove("running"); renderOut(id); saveDraft();
 }
@@ -664,11 +708,29 @@ async function refreshCell(id){
   const c=cell(id), el=document.querySelector(`[data-id="${id}"]`); const sql=c?.result?.sql; if(!c||!sql) return;
   touch(); el.classList.add("running");
   try{
-    const r=await api("/sql",{method:"POST",body:{sql}});
+    const r=await api("/sql",{method:"POST",body:{sql}}); r.edited=c.result.edited;
     S.results[id]=analyze(r); c.result=r;
   }catch(err){ failed(id,err); }
   el.classList.remove("running"); renderOut(id); saveDraft();
 }
+// A question's SQL, as the person edited it: run with no agent call, and
+// remembered server-side as that question's latest state.
+async function runEdited(id){
+  const c=cell(id), el=document.querySelector(`[data-id="${id}"]`), sql=(c?._sql??c?.result?.sql)?.trim(); if(!sql) return;
+  touch(); el.classList.add("running");
+  try{
+    const r=await api("/ask/sql",{method:"POST",body:{question:c.text.trim(),sql}});
+    r.edited=c.result.edited||sql!==c.result.sql.trim();
+    S.results[id]=analyze(r); c.result=r; delete c._sql;
+  }catch(err){ failed(id,err); }
+  el.classList.remove("running"); renderOut(id); saveDraft();
+}
+$("clearCtxBtn").onclick=async()=>{
+  const b=$("clearCtxBtn"); b.disabled=true;
+  try{ await api("/context",{method:"DELETE"}); b.textContent="Context cleared"; }
+  catch(err){ b.textContent="Could not clear"; }
+  setTimeout(()=>{ b.textContent="Clear context"; b.disabled=false; },1500);
+};
 async function runAll(){
   $("runAllBtn").disabled=true;
   for(const c of S.nb.cells) if(c.kind!=="md"&&c.text.trim()) await runCell(c.id);
@@ -782,7 +844,12 @@ function renderOut(id){
   const notes=[]; if(r.attempts>1) notes.push(`${r.attempts} attempts`);
   out.innerHTML=
     (r.error?`<div class="banner bad">${r.error}</div>`:"")
-    + (c.kind==="ask"?`<details class="sqlnote"><summary class="dim" style="cursor:pointer">the agent wrote</summary><pre>${esc(r.sql)}</pre></details>`:"")
+    + (c.kind==="ask"?`<details class="sqlnote"${c._sqlOpen?" open":""} ontoggle="sqlToggle(this,'${id}')">
+        <summary class="dim">${r.edited?"SQL · edited by you":"the agent wrote"}</summary>
+        <textarea class="code" oninput="cell('${id}')._sql=this.value;autosize(this)" onkeydown="askSqlKey(event,'${id}')"></textarea>
+        <div class="row"><button class="sm" onclick="runEdited('${id}')" title="Run this SQL (⌘/Ctrl+Enter), no agent call">Run SQL</button>
+          <span class="dim">edit and run it; the next question builds on this version</span></div>
+      </details>`:"")
     + (r.note?`<div class="banner warn">${esc(r.note)}</div>`:"")
     + `<div class="body"></div>`
     + `<div class="meta">
@@ -797,10 +864,13 @@ function renderOut(id){
         <button class="ghost sm" onclick="downloadCsv('${id}')">CSV</button>
        </div>
        <div class="cfg hide"></div>`;
+  const sqlTa=out.querySelector(".sqlnote textarea");
+  if(sqlTa){ sqlTa.value=c._sql??r.sql; highlight(sqlTa); autosize(sqlTa); }
   const body=out.querySelector(".body");
   if(showChart) drawChart(body,r,sp,c); else body.appendChild(tableEl(r));
   if(c._cfgOpen) toggleCfg(id,true);
 }
+function sqlToggle(d,id){ cell(id)._sqlOpen=d.open; if(d.open) autosize(d.querySelector("textarea")); }
 function setView(id,v){ const c=cell(id); c.chart={...(c.chart||{}),view:v}; renderOut(id); saveDraft(); }
 const COL_W=160, COL_MIN=40;
 function tableEl(r){
