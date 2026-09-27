@@ -152,6 +152,13 @@
   th,td{border:1px solid var(--line);padding:5px 9px;text-align:left;white-space:nowrap}
   td.num{text-align:right;font-variant-numeric:tabular-nums}
   th{background:var(--panel2);color:var(--dim);position:sticky;top:0}
+  /* Result grid: every column starts at the same width; drag a header's edge to resize. */
+  .gridWrap{overflow:auto;max-height:52vh;margin-top:10px}
+  .gridWrap table{display:table;table-layout:fixed;width:auto;margin:0;overflow:visible;max-height:none}
+  .gridWrap th,.gridWrap td{overflow:hidden;text-overflow:ellipsis}
+  .gridWrap th{padding-right:14px}
+  .gridWrap .grip{position:absolute;top:0;right:-3px;width:7px;height:100%;cursor:col-resize;z-index:1}
+  .gridWrap .grip:hover,.gridWrap .grip.on{background:var(--accent);opacity:.5}
   pre{background:var(--panel2);border:1px solid var(--line);border-radius:8px;padding:10px;
       overflow:auto;font-size:12px;white-space:pre-wrap;margin:8px 0 0}
   .banner{border-radius:8px;padding:9px 12px;margin-top:10px;font-size:13px}
@@ -390,13 +397,14 @@ function sourceFacts(src){
 
 // The sidebar tree, DuckDB-style: every saved database is a root; the active
 // one carries its schemas and tables, the others sit dimmed until reconnected.
-async function loadSchema(){
+// fresh: re-read the database's catalog instead of the snapshot taken on connect.
+async function loadSchema(fresh=false){
   let h={};
   try{
     const [srcs,health]=await Promise.all([api("/sources"),api("/health",{auth:false})]); h=health;
     META={sources:srcs.sources,source:h.source,connected:!!h.connected,schemas:new Map()};
     if(!META.sources.length){ $("schema").innerHTML=`<div class="dim"><i>None</i></div>`; return h; }
-    const d=h.connected?await api("/metadata"):{tables:[]};
+    const d=!h.connected?{tables:[]}:fresh?await api("/metadata/refresh",{method:"POST"}):await api("/metadata");
     // Group by schema (the part of "schema.table" before the dot; a table with no
     // dot is in the implicit "main" schema).
     for(const t of d.tables){
@@ -514,7 +522,7 @@ function queryTable(fqn){
   c.text=`SELECT *\nFROM ${fqn}\nLIMIT 100`; renderAll(); saveDraft();
   document.querySelector(`[data-id="${c.id}"] textarea`)?.focus();
 }
-$("refreshMeta").onclick=loadSchema; $("dbAddBtn").onclick=()=>openConnect(); $("llmBtn").onclick=openLlm;
+$("refreshMeta").onclick=()=>loadSchema(true); $("dbAddBtn").onclick=()=>openConnect(); $("llmBtn").onclick=openLlm;
 $("sbBtn").onclick=()=>{ $("sidebarcol").classList.toggle("hide"); $("sbResizer").classList.toggle("hide"); rerenderCharts(); };
 
 /* ------------------------------------------------------------ cells */
@@ -565,7 +573,7 @@ function renderCell(id){
     </div>
     <div class="editor">
       <textarea class="${c.kind==="sql"?"code":""}" placeholder="${esc(PLACEHOLDER[c.kind])}"
-        oninput="onEdit('${id}',this)" onkeydown="if((event.metaKey||event.ctrlKey)&&event.key==='Enter'){event.preventDefault();runCell('${id}')}"></textarea>
+        oninput="onEdit('${id}',this)" onkeydown="cellKey(event,'${id}')"></textarea>
     </div>
     <div class="out"></div>
     <div class="grip" title="Drag to resize" onmousedown="startResize(event,'${id}')"></div>`;
@@ -610,6 +618,24 @@ function dropCell(e,id){
 }
 function autosize(ta){ ta.style.height="auto"; ta.style.height=Math.min(Math.max(ta.scrollHeight+2,74),420)+"px"; }
 function onEdit(id,ta){ const c=cell(id); c.text=ta.value; autosize(ta); if(c.kind==="md") renderOut(id); saveDraft(); }
+// Cmd/Ctrl+Enter runs. In a SQL cell Tab indents and Shift+Tab outdents the
+// selected lines; Escape leaves the editor so Tab moves focus again.
+const INDENT="  ";
+function cellKey(e,id){
+  const ta=e.target;
+  if((e.metaKey||e.ctrlKey)&&e.key==="Enter"){ e.preventDefault(); runCell(id); return; }
+  if(e.key==="Escape"){ ta.blur(); return; }
+  if(e.key!=="Tab"||cell(id).kind!=="sql") return;
+  e.preventDefault();
+  const v=ta.value, {selectionStart:a,selectionEnd:b}=ta;
+  if(!e.shiftKey&&a===b){ document.execCommand("insertText",false,INDENT); return; }
+  const from=v.lastIndexOf("\n",a-1)+1, lines=v.slice(from,b).split("\n");
+  const out=lines.map(l=>e.shiftKey?l.replace(new RegExp(`^ {1,${INDENT.length}}`),""):INDENT+l);
+  ta.setSelectionRange(from,b);
+  document.execCommand("insertText",false,out.join("\n"));   // keeps undo working
+  const shift=out[0].length-lines[0].length;
+  ta.setSelectionRange(Math.max(from,a+shift),from+out.join("\n").length);
+}
 
 /* ---------------------------------------------------------- running */
 async function runCell(id){
@@ -776,12 +802,24 @@ function renderOut(id){
   if(c._cfgOpen) toggleCfg(id,true);
 }
 function setView(id,v){ const c=cell(id); c.chart={...(c.chart||{}),view:v}; renderOut(id); saveDraft(); }
+const COL_W=160, COL_MIN=40;
 function tableEl(r){
-  const t=document.createElement("table");
-  t.innerHTML=`<thead><tr>${r.columns.map(c=>`<th>${esc(c.name)}</th>`).join("")}</tr></thead><tbody>`
-    + r.rows.slice(0,500).map(row=>`<tr>${row.map((v,i)=>`<td class="${r.columns[i].type==="number"?"num":""}">${esc(v)}</td>`).join("")}</tr>`).join("")
+  const wrap=document.createElement("div"); wrap.className="gridWrap";
+  const cols=r.columns.map(()=>COL_W), t=document.createElement("table");
+  const fit=()=>{ t.style.width=cols.reduce((a,b)=>a+b,0)+"px"; };
+  t.innerHTML=`<colgroup>${cols.map(w=>`<col style="width:${w}px">`).join("")}</colgroup>`
+    + `<thead><tr>${r.columns.map(c=>`<th title="${esc(c.name)}">${esc(c.name)}<span class="grip"></span></th>`).join("")}</tr></thead><tbody>`
+    + r.rows.slice(0,500).map(row=>`<tr>${row.map((v,i)=>`<td class="${r.columns[i].type==="number"?"num":""}" title="${esc(v)}">${esc(v)}</td>`).join("")}</tr>`).join("")
     + `</tbody>`;
-  return t;
+  const colEls=t.querySelectorAll("col");
+  t.querySelectorAll(".grip").forEach((g,i)=>g.onpointerdown=e=>{
+    e.preventDefault(); g.setPointerCapture(e.pointerId); g.classList.add("on");
+    const x0=e.clientX, w0=cols[i];
+    g.onpointermove=m=>{ cols[i]=Math.max(COL_MIN,w0+m.clientX-x0); colEls[i].style.width=cols[i]+"px"; fit(); };
+    g.onpointerup=()=>{ g.onpointermove=g.onpointerup=null; g.classList.remove("on"); };
+  });
+  fit(); wrap.appendChild(t);
+  return wrap;
 }
 function downloadCsv(id){
   const r=S.results[id], q=v=>`"${String(v??"").replace(/"/g,'""')}"`;

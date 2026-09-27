@@ -196,6 +196,11 @@ def create_app(escrowe: Escrowe | None = None, local_operator: bool = False) -> 
         tables = run(lambda: svc.schema_for(p)) or []
         return {"tables": [t.to_dict() for t in tables], "text": render_schema(tables)}
 
+    @app.post("/metadata/refresh")
+    def refresh_metadata(p: Principal = Depends(principal)):
+        tables = run(lambda: svc.refresh_schema(p)) or []
+        return {"tables": [t.to_dict() for t in tables], "text": render_schema(tables)}
+
     @app.post("/sql")
     def run_sql(body: SqlBody, p: Principal = Depends(principal), format: str = Query("json")):
         return render(run(lambda: svc.sql(p, body.sql)), format)

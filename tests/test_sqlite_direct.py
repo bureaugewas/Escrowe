@@ -54,3 +54,14 @@ def test_direct_catalog_reads_real_sqlite_tables(direct_svc):
     text = render_schema(read_schema(direct_svc.engine))
     assert "customers" in text
     assert "orders" in text
+
+
+def test_refresh_schema_picks_up_a_renamed_table(direct_svc, db_path):
+    import sqlite3
+    with sqlite3.connect(db_path) as conn:
+        conn.execute("ALTER TABLE orders RENAME TO purchases")
+    p = direct_svc.operator_principal()
+    assert "orders" in {t.fqn for t in direct_svc.schema_for(p)}   # the snapshot from connecting
+    names = {t.fqn for t in direct_svc.refresh_schema(p)}
+    assert "purchases" in names and "orders" not in names
+    assert direct_svc.schema_for(p) == direct_svc.refresh_schema(p)
