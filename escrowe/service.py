@@ -332,7 +332,7 @@ class Escrowe:
         return QueryResult(table, sql, (time.time() - started) * 1000, audit_id, attempts, provider)
 
     def ask(self, principal: Principal, question: str, on_status=None,
-            feed_data: str | None = None, on_token=None) -> QueryResult | Answer:
+            feed_data: str | None = None, on_token=None, current_sql: str | None = None) -> QueryResult | Answer:
         """Question -> agent -> SQL -> engine -> rows to the caller.
 
         The agent sees the schema, shape feedback and this session's history;
@@ -340,7 +340,8 @@ class Escrowe:
         phrase as the phases change; `on_token` with reply text as it streams.
         With `feed_data`, the question is about a result already in hand
         (\\feed): no schema, no new query, and the fed text is remembered in
-        this session's history from then on.
+        this session's history from then on. `current_sql` is the query the
+        asking cell holds now, so a reworded question revises it.
         """
         question = question.strip()
         session_id = principal.session or self._operator_session_id
@@ -353,10 +354,13 @@ class Escrowe:
             return self._ask_about_fed_data(principal, question, feed_data, history, context, on_status, on_token)
 
         # An exact repeat of an earlier question replays its result: no agent
-        # call, no new query. That is what re-running a question means.
+        # call, no new query. That is what re-running a question means - unless
+        # the cell's SQL has since been edited, which is a new state to ask from.
         for turn in reversed(history):
             if turn.question == question and turn.result is not None:
-                return turn.result
+                if current_sql is None or current_sql == turn.sql:
+                    return turn.result
+                break
 
         tables = self.schema_for(principal)
         if tables is None:
@@ -372,7 +376,7 @@ class Escrowe:
             # the one actually returned.
             buffer: list[str] = []
             proposal = self.agent.propose(question, schema_text, attempts, context=context, history=history,
-                                          on_token=buffer.append if on_token else None)
+                                          on_token=buffer.append if on_token else None, current_sql=current_sql)
             if proposal.answer:
                 for token in buffer if on_token else ():
                     on_token(token)
@@ -402,6 +406,26 @@ class Escrowe:
                                                    shape=shape_feedback(result.table), result=result))
             return result
         raise Denied(f"No acceptable query after {self.settings.agent_attempts} attempts. Last: {last_error}")
+
+    def run_edited(self, principal: Principal, question: str, sql: str) -> QueryResult:
+        """The person rewrote the SQL a question produced and ran it. It runs
+        read-only, like the agent's, and becomes that question's latest state
+        in this session's history, so the next question builds on it."""
+        question, sql = question.strip(), sql.strip()
+        result = self.sql(principal, sql, mode="edit", question=question, allow_write=False)
+        session_id = principal.session or self._operator_session_id
+        turns = self._history.setdefault(session_id, [])
+        prev = next((t for t in reversed(turns) if t.question == question), None)
+        turns[:] = [t for t in turns if t.question != question]
+        edited = prev is None or prev.edited or prev.sql != sql
+        self._remember(session_id, HistoryTurn(question, sql=result.sql, shape=shape_feedback(result.table),
+                                               result=result, edited=edited))
+        return result
+
+    def clear_history(self, principal: Principal) -> None:
+        """Forget this session's earlier questions: the next one starts with no
+        conversation, and no repeat is replayed."""
+        self._history.pop(principal.session or self._operator_session_id, None)
 
     def _ask_about_fed_data(self, principal, question, feed_data, history, context, on_status, on_token) -> Answer:
         if on_status:

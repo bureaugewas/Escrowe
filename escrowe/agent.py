@@ -13,7 +13,6 @@ Providers:
   codex-cli   the Codex CLI (`codex exec`), reusing its ChatGPT browser login
   mock        a deterministic stand-in for tests and offline demos
   none        no LLM connected: every question is refused
-  none        no LLM connected: every question is refused
 
 A CLI provider is given no model: it answers with whatever that CLI is set to,
 which is the account holder's own choice, not escrowe's.
@@ -67,7 +66,9 @@ account does not have access to it. You have seen no values, so never state one.
 
 Earlier questions this session, their SQL, and their shape (row counts, which columns came
 back all-NULL) may appear below as CONVERSATION SO FAR - never their rows, unless a line is
-marked "shared via \\feed", which is the one deliberate, person-approved exception.
+marked "shared via \\feed", which is the one deliberate, person-approved exception. SQL
+marked "edited by the person" is their own correction and the current state: build on it
+and keep its changes rather than going back to what an earlier attempt assumed.
 
 SCHEMA
 {schema}"""
@@ -103,6 +104,7 @@ class HistoryTurn:
     shape: str | None = None
     fed: str | None = None
     result: object = None
+    edited: bool = False             # the person rewrote the agent's SQL and ran it
 
 
 @dataclass
@@ -171,7 +173,7 @@ def render_history(history: list[HistoryTurn] | None) -> str:
     for h in history[-HISTORY_MAX_TURNS:]:
         line = f"- Q: {h.question}"
         if h.sql:
-            line += f"\n  SQL: {h.sql}"
+            line += f"\n  SQL{' (edited by the person)' if h.edited else ''}: {h.sql}"
         if h.shape:
             line += f"\n  Result: {h.shape}"
         if h.fed:
@@ -237,10 +239,16 @@ class Agent:
 
     def propose(self, question: str, schema_text: str, attempts: list[Attempt],
                 context: dict | None = None, history: list[HistoryTurn] | None = None,
-                on_token=None) -> AgentResult:
-        """Write SQL (or answer in prose) from the schema and this session's history."""
+                on_token=None, current_sql: str | None = None) -> AgentResult:
+        """Write SQL (or answer in prose) from the schema and this session's history.
+        `current_sql` is the query the person's cell holds now, possibly edited
+        by hand: the question is a revision of it, not a fresh start."""
         system = SYSTEM.replace("{schema}", schema_text)
-        user = render_history(history) + f"QUESTION: {question}"
+        user = render_history(history)
+        if current_sql:
+            user += ("CURRENT QUERY for this question, as the person last left it (it may be "
+                     f"hand-edited; keep its changes unless the question asks otherwise):\n{current_sql}\n\n")
+        user += f"QUESTION: {question}"
         if attempts:
             tried = "\n".join(f"- attempt {i + 1}: {a.sql}\n  result: {a.feedback}" for i, a in enumerate(attempts))
             user += (f"\n\nPrevious attempts:\n{tried}\n\n"

@@ -36,6 +36,7 @@ class SqlBody(BaseModel):
 
 class AskBody(BaseModel):
     question: str
+    sql: str | None = None      # the cell's current SQL, possibly edited by hand
 
 
 class SourceBody(BaseModel):
@@ -207,7 +208,19 @@ def create_app(escrowe: Escrowe | None = None, local_operator: bool = False) -> 
 
     @app.post("/ask")
     def ask(body: AskBody, p: Principal = Depends(principal), format: str = Query("json")):
-        return render(run(lambda: svc.ask(p, body.question)), format)
+        return render(run(lambda: svc.ask(p, body.question, current_sql=body.sql)), format)
+
+    @app.post("/ask/sql")
+    def ask_edited(body: AskBody, p: Principal = Depends(principal), format: str = Query("json")):
+        """Run a question's SQL as the person edited it; it becomes the context."""
+        if not body.sql:
+            raise HTTPException(400, "No SQL to run.")
+        return render(run(lambda: svc.run_edited(p, body.question, body.sql)), format)
+
+    @app.delete("/context")
+    def clear_context(p: Principal = Depends(principal)):
+        svc.clear_history(p)
+        return {"ok": True}
 
     @app.get("/audit")
     def audit(p: Principal = Depends(principal), limit: int = 50):
