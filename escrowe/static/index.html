@@ -239,20 +239,29 @@
   body.present .cell .sqlnote{display:none!important}
   body.present main>section{padding:22px 22px 0}
   body.present #runAllBtn{margin-left:auto}   /* the centred search that held the buttons right is hidden */
-  body.present #cells{display:grid;grid-template-columns:repeat(auto-fill,minmax(380px,1fr));gap:16px;align-items:start}
-  body.present .cell.wide{grid-column:1/-1}
+  /* The board: each tile has its own place on an invisible grid of 12 columns and
+     40px rows, apart from the notebook's order. Tiles glide when others push them. */
+  body.present #cells{position:relative}
+  body.present .cell{position:absolute;display:flex;flex-direction:column;overflow:hidden;
+                     transition:left .2s ease-out,top .2s ease-out,width .2s ease-out,height .2s ease-out}
+  body.present .cell.moving{transition:none;z-index:2;box-shadow:0 10px 30px rgba(0,0,0,.18)}
+  body.present .cell.moving .body svg{width:100%;height:auto}
+  body.present .cell .head{cursor:grab}
+  #cells.busy .cell .body{pointer-events:none}      /* no tooltips while tiles move */
+  body.present .cell.moving .head{cursor:grabbing}
+  body.present .cell .out,body.present .cell .body{flex:1;min-height:0;display:flex;flex-direction:column}
+  body.present .cell .body{overflow:hidden}
+  body.present .cell .body>*{flex:none;margin:0}
+  body.present .cell .gridWrap{max-height:none;flex:1;min-height:0}
+  #cells .slot{position:absolute;pointer-events:none;border-radius:var(--radius);border:1.5px dashed var(--accent);
+               background:color-mix(in srgb,var(--accent) 8%,transparent);transition:all .15s ease-out}
   .cell .grip{display:none}
-  body.present .cell{position:relative;cursor:grab}
-  body.present .cell .grip{display:block}
-  body.present .cell.dragging{opacity:.4}
-  body.present .cell.dropTarget{outline:2px dashed var(--accent);outline-offset:2px}
-  body.present .cell .grip{position:absolute;right:4px;bottom:4px;width:14px;height:14px;cursor:nwse-resize;
+  body.present .cell .grip{display:block;position:absolute;right:4px;bottom:4px;width:14px;height:14px;cursor:nwse-resize;
     border-right:2px solid var(--dim);border-bottom:2px solid var(--dim);border-radius:0 0 3px 0;opacity:.5}
   body.present .cell .grip:hover{opacity:1}
   body.present .cell .title{pointer-events:none;border-color:transparent!important;background:transparent!important;
                             font-size:15px;padding-left:0}
   body.present .cell .head{margin-bottom:2px}
-  body.present .cell table{max-height:340px}
   body.present .stat .v{font-size:38px}
 </style>
 </head>
@@ -575,6 +584,7 @@ function renderAll(){
   const host=$("cells"); host.innerHTML="";
   if(!S.nb.cells.length){ host.innerHTML=`<div class="empty">Add a cell below to get started.</div>`; return; }
   for(const c of S.nb.cells){ const el=document.createElement("div"); el.className="cell"; el.dataset.id=c.id; host.appendChild(el); renderCell(c.id); }
+  fitBoard();
 }
 
 function renderCell(id){
@@ -602,45 +612,87 @@ function renderCell(id){
         oninput="onEdit('${id}',this)" onkeydown="cellKey(event,'${id}')"></textarea>
     </div>
     <div class="out"></div>
-    <div class="grip" title="Drag to resize" onmousedown="startResize(event,'${id}')"></div>`;
+    <div class="grip" title="Drag to resize" onpointerdown="startMove(event,'${id}',true)"></div>`;
   const ta=el.querySelector("textarea"); ta.value=c.text; if(c.kind==="sql") highlight(ta); autosize(ta);
-  el.draggable=S.present; el.ondragstart=e=>dragCell(e,id); el.ondragover=e=>{e.preventDefault();el.classList.add("dropTarget")};
-  el.ondragleave=()=>el.classList.remove("dropTarget"); el.ondrop=e=>dropCell(e,id);
-  applySpan(id);
+  el.querySelector(".head").onpointerdown=e=>startMove(e,id);
+  placeTile(id);
   renderOut(id);
 }
 
 /* -------------------------------------------- present-mode layout */
-// A cell's tile size lives in its chart config (chart.span = grid columns,
-// chart.h = chart height in px) so it's saved with the notebook. Both are
-// only set by hand: the auto layout is untouched until someone drags a corner.
-function gridCols(){ return getComputedStyle($("cells")).gridTemplateColumns.split(" ").length; }
-function applySpan(id){
-  const c=cell(id), el=document.querySelector(`[data-id="${id}"]`); if(!el) return;
-  const span=c.chart?.span;
-  el.style.gridColumn=S.present&&span?`span ${Math.min(span,gridCols())}`:"";
+// In present mode each chart is a tile with its own place on the board, kept in
+// its chart config as chart.tile = {x,y,w,h}: column and row of its top-left
+// corner and its size, on a grid of 12 columns and ROW_H px rows. The board
+// is not the notebook's order: moving a tile never moves its cell.
+const GRID=12, ROW_H=40, GAP=16;
+// A tile's size before anyone set one: older notebooks kept a width (w, or span
+// on a grid usually two wide) and a chart height in px; else half the board.
+function sizeOf(c){
+  const ch=c.chart||{}, wide=S.results[c.id]?.wide;
+  const w=ch.w??(ch.span&&Math.min(GRID,ch.span*6))??(wide?GRID:6);
+  return {w, h:ch.h?Math.round((ch.h+76)/ROW_H):9};
 }
-function startResize(e,id){
-  if(!S.present) return; e.preventDefault(); e.stopPropagation();
-  const c=cell(id), el=e.target.closest(".cell"); c.chart=c.chart||{type:"auto"};
-  const host=$("cells"), colW=host.clientWidth/gridCols();
-  const span0=c.chart.span||(el.classList.contains("wide")?gridCols():1), h0=c.chart.h||280, x0=e.clientX, y0=e.clientY;
-  el.draggable=false;
-  const move=ev=>{
-    c.chart.span=Math.max(1,Math.min(gridCols(),Math.round(span0+(ev.clientX-x0)/colW)));
-    c.chart.h=Math.max(160,Math.min(900,Math.round(h0+(ev.clientY-y0))));
-    applySpan(id); rerenderCharts();
+// Every tile's place. Tiles never placed go below the placed ones, in cell
+// order, each at the first spot where it fits.
+function boardLayout(){
+  const placed=S.nb.cells.filter(c=>c.chart?.tile).map(c=>({id:c.id,...c.chart.tile}));
+  for(const c of S.nb.cells) if(!c.chart?.tile){
+    const t={id:c.id,x:0,y:0,...sizeOf(c)};
+    for(t.y=0;;t.y++){ for(t.x=0;t.x+t.w<=GRID&&placed.some(o=>hits(t,o));t.x++); if(t.x+t.w<=GRID) break; }
+    placed.push(t);
+  }
+  return placed;
+}
+const hits=(a,b)=>a.id!==b.id&&a.x<b.x+b.w&&b.x<a.x+a.w&&a.y<b.y+b.h&&b.y<a.y+a.h;
+// Tiles the moved one lands on move down out of its way, and push on in turn.
+function pushDown(layout,t){
+  for(const o of layout) if(hits(t,o)){ o.y=t.y+t.h; pushDown(layout,o); }
+}
+const colW=()=>($("cells").clientWidth+GAP)/GRID;
+const tileBox=t=>({left:t.x*colW(),top:t.y*ROW_H,width:t.w*colW()-GAP,height:t.h*ROW_H-GAP});
+function placeTile(id,t=boardLayout().find(t=>t.id===id)){
+  const el=document.querySelector(`[data-id="${id}"]`); if(!el) return;
+  if(!S.present){ el.removeAttribute("style"); return; }
+  for(const [k,v] of Object.entries(tileBox(t))) el.style[k]=v+"px";
+}
+function fitBoard(extra=0){
+  $("cells").style.height=S.present?Math.max(0,...boardLayout().map(t=>t.y+t.h+extra))*ROW_H+"px":"";
+}
+// Moving by the head, or resizing by the corner grip. The tile follows the
+// mouse freely, once per frame; an outline shows the grid spot it snaps to and
+// the tiles in its way glide aside. On release it settles into the outline and,
+// if its size changed, its chart is drawn once at the new size.
+function startMove(e,id,resize){
+  if(!S.present||e.button) return; e.preventDefault(); e.stopPropagation();
+  const el=document.querySelector(`[data-id="${id}"]`), host=$("cells");
+  const base=boardLayout(), me=base.find(t=>t.id===id), start=tileBox(me), x0=e.clientX, y0=e.clientY;
+  // The board as it is now becomes everyone's saved place, so nothing jumps later.
+  for(const t of base){ const c=cell(t.id); c.chart={...(c.chart||{type:"auto"}),tile:{x:t.x,y:t.y,w:t.w,h:t.h}}; }
+  const slot=Object.assign(document.createElement("div"),{className:"slot"}); host.append(slot);
+  el.classList.add("moving"); host.classList.add("busy"); tipBox.hidden=true;
+  let dx=0, dy=0, raf=0, snap=me;
+  const frame=()=>{
+    raf=0;
+    const box=resize?{...start,width:Math.max(120,start.width+dx),height:Math.max(100,start.height+dy)}
+                    :{...start,left:start.left+dx,top:Math.max(0,start.top+dy)};
+    snap=resize?{...me,w:Math.max(3,Math.min(GRID-me.x,Math.round((box.width+GAP)/colW()))),h:Math.max(4,Math.round((box.height+GAP)/ROW_H))}
+               :{...me,x:Math.max(0,Math.min(GRID-me.w,Math.round(box.left/colW()))),y:Math.max(0,Math.round(box.top/ROW_H))};
+    const layout=base.map(t=>t.id===id?snap:{...t});
+    pushDown(layout,snap);
+    for(const t of layout) if(t.id!==id) placeTile(t.id,t);
+    for(const [k,v] of Object.entries(box)) el.style[k]=v+"px";
+    for(const [k,v] of Object.entries(tileBox(snap))) slot.style[k]=v+"px";
+    host.style.height=Math.max(...layout.map(t=>t.y+t.h))*ROW_H+ROW_H*4+"px";   // room to drag below
+    layout.forEach(t=>{ cell(t.id).chart.tile={x:t.x,y:t.y,w:t.w,h:t.h}; });
   };
-  const up=()=>{ window.removeEventListener("mousemove",move); window.removeEventListener("mouseup",up); el.draggable=true; saveDraft(); };
-  window.addEventListener("mousemove",move); window.addEventListener("mouseup",up);
-}
-let dragId=null;
-function dragCell(e,id){ dragId=id; e.dataTransfer.effectAllowed="move"; e.target.classList.add("dragging"); }
-function dropCell(e,id){
-  e.preventDefault(); document.querySelectorAll(".cell.dragging,.cell.dropTarget").forEach(x=>x.classList.remove("dragging","dropTarget"));
-  if(!dragId||dragId===id) return;
-  const cells=S.nb.cells, from=cells.findIndex(c=>c.id===dragId), to=cells.findIndex(c=>c.id===id);
-  const [m]=cells.splice(from,1); cells.splice(to,0,m); dragId=null; renderAll(); saveDraft();
+  const move=ev=>{ dx=ev.clientX-x0; dy=ev.clientY-y0; raf||=requestAnimationFrame(frame); };
+  const up=()=>{
+    removeEventListener("pointermove",move); removeEventListener("pointerup",up); cancelAnimationFrame(raf); frame();
+    slot.remove(); el.classList.remove("moving"); host.classList.remove("busy"); placeTile(id,snap); fitBoard(); saveDraft();
+    if(resize) el.addEventListener("transitionend",()=>renderOut(id),{once:true});
+  };
+  addEventListener("pointermove",move); addEventListener("pointerup",up);
+  frame();
 }
 function autosize(ta){ ta.style.height="auto"; ta.style.height=Math.min(Math.max(ta.scrollHeight+2,74),420)+"px"; }
 function onEdit(id,ta){ const c=cell(id); c.text=ta.value; autosize(ta); if(c.kind==="md") renderOut(id); saveDraft(); }
@@ -980,7 +1032,7 @@ function toggleY(id,el){
 }
 function setCfg(id,k,v){
   const c=cell(id);
-  if(k===null) c.chart={type:"auto",span:c.chart?.span,h:c.chart?.h};   // no view either - back to fully dynamic; the tile keeps its size
+  if(k===null) c.chart={type:"auto",tile:c.chart?.tile};   // no view either - back to fully dynamic; the tile keeps its size
   else if(k==="type"){
     const sp=spec(c,S.results[id]);
     let y=sp.y;
@@ -1044,7 +1096,7 @@ function drawChart(host,r,sp,c){
   // European Summer Time)"), which always tripped the "long labels -> go horizontal" heuristic below
   // and showed only its truncated tail. A short date keeps time-series bars vertical, as expected.
   const catLabel=v=>(xs.type==="date"&&v instanceof Date&&!isNaN(v))?fmtDate(v):String(v);
-  const marks=[], o={x:{label:sp.x},y:{label:multiY?null:sp.y,grid:true},width,height:(S.present&&c.chart?.h)||280,marginLeft:56,
+  const marks=[], o={x:{label:sp.x},y:{label:multiY?null:sp.y,grid:true},width,height:280,marginLeft:56,
                      style:{background:"transparent",color:cssVar("--dim"),fontSize:"11px"},
                      color:(sp.color||multiY)?{legend:true,range:series}:undefined};
   try{
@@ -1092,12 +1144,17 @@ function drawChart(host,r,sp,c){
       if(hover) marks.push(Plot.dot(data,Plot.pointer({x:sp.x,y:sp.y,r:sp.size?sp.size:4,fill:"none",stroke:ink,strokeWidth:1.5})));
       if(sp.size) o.r={range:[3,18]};
     }
-    const fig=Plot.plot({...o,marks}); host.appendChild(fig);
+    // On the board a chart fills its tile: whatever a legend takes comes off the plot.
+    const room=S.present&&host.clientHeight;
+    if(room) o.height=Math.max(120,room);
+    let fig=Plot.plot({...o,marks}); host.appendChild(fig);
+    const over=room&&host.scrollHeight-room;
+    if(over>0){ fig.remove(); fig=Plot.plot({...o,height:Math.max(120,room-over),marks}); host.appendChild(fig); }
     if(hover) hoverTip(fig,tipCols);
     fig.querySelectorAll('[aria-label$="grid"] line').forEach(l=>l.setAttribute("stroke",cssVar("--grid")));
   }catch(e){ host.innerHTML=`<div class="banner bad">Could not chart this: ${esc(e.message)}</div>`; host.appendChild(tableEl(r)); }
 }
-let rrT; function rerenderCharts(){ clearTimeout(rrT); rrT=setTimeout(()=>S.nb.cells.forEach(c=>S.results[c.id]&&renderOut(c.id)),120); }
+let rrT; function rerenderCharts(){ clearTimeout(rrT); rrT=setTimeout(()=>S.nb.cells.forEach(c=>{ placeTile(c.id); S.results[c.id]&&renderOut(c.id); }),120); }
 
 /* --------------------------------------------------------- sidebar resize */
 (function(){
@@ -1194,8 +1251,8 @@ document.addEventListener("keydown",e=>{ if(e.key==="Escape"&&S.present) setPres
 // What goes to disk (or the local draft): cell definitions plus each cell's
 // last result, so opening a notebook shows it instantly with no re-query and
 // no agent call - Run/Run all refreshes a cell on request.
-function cleanCells(){ return S.nb.cells.map(c=>{ const {type,x,y,color,size,view,span,h,tip}=c.chart||{};
-  return {id:c.id,kind:c.kind,title:c.title||"",text:c.text||"",chart:{type:type||"auto",x,y,color,size,view:view||null,span,h,tip},
+function cleanCells(){ return S.nb.cells.map(c=>{ const {type,x,y,color,size,view,tip,tile,w,h,span}=c.chart||{};
+  return {id:c.id,kind:c.kind,title:c.title||"",text:c.text||"",chart:{type:type||"auto",x,y,color,size,view:view||null,tip,...(tile?{tile}:{w,h,span})},
           result:c.result||null}; }); }
 let draftT; function saveDraft(){ fitName(); clearTimeout(draftT); draftT=setTimeout(()=>{
   try{ localStorage.setItem(DRAFT_KEY,JSON.stringify({name:$("nbName").value,cells:cleanCells(),palette:S.nb.palette||null})); }catch{}
