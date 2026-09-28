@@ -84,11 +84,18 @@
   .chip{background:var(--panel2);border:1px solid var(--line);border-radius:20px;padding:3px 11px;font-size:12px}
   .dot{display:inline-block;width:7px;height:7px;border-radius:50%;background:var(--dim);margin-right:6px;vertical-align:middle}
   .dot.on{background:var(--ok)}
-  .ymulti{grid-column:1/-1}
-  .chips{display:flex;flex-wrap:wrap;gap:6px;margin-top:4px}
-  .chip-check{display:flex;align-items:center;gap:5px;background:var(--panel2);border:1px solid var(--line);
-             border-radius:20px;padding:3px 11px 3px 8px;font-size:12px;cursor:pointer;user-select:none}
-  .chip-check input{width:auto;margin:0}
+  /* dropdown checklist: a <details> styled like a select, its menu floating below */
+  .dd{position:relative}
+  .dd summary{list-style:none;cursor:pointer;background:var(--panel2);border:1px solid var(--line);border-radius:8px;
+              padding:4px 22px 4px 8px;font-size:12px;white-space:nowrap;overflow:hidden;text-overflow:ellipsis;position:relative}
+  .dd summary::-webkit-details-marker{display:none}
+  .dd summary::after{content:"▾";position:absolute;right:8px;color:var(--dim)}
+  .ddmenu{position:absolute;z-index:20;top:calc(100% + 4px);left:0;min-width:100%;max-height:260px;overflow:auto;
+          background:var(--panel);border:1px solid var(--line);border-radius:8px;padding:4px;box-shadow:0 8px 24px rgba(0,0,0,.25)}
+  .cfg .ddopt{display:flex;gap:7px;align-items:center;margin:0;padding:5px 7px;border-radius:6px;color:var(--text);
+         font-size:12px;white-space:nowrap;cursor:pointer;user-select:none}
+  .ddopt:hover{background:var(--panel2)}
+  .ddopt input{width:auto;margin:0}
   .spacer{flex:1}
   main{display:flex;align-items:flex-start}
   .sidebarcol{display:flex;flex-direction:column;flex:0 0 var(--sbw);min-width:180px;max-width:560px;overflow:hidden;
@@ -823,7 +830,7 @@ function spec(c,res){
     x=x||(type==="scatter"?nums[0]?.name:(dates[0]||other[0]||res.columns[0])?.name);
     y=y||(nums.find(k=>k.name!==x)||res.columns.find(k=>k.name!==x))?.name;
   }
-  return {type,x,y,color:pick("color"),size:pick("size")};
+  return {type,x,y,color:pick("color"),size:pick("size"),tip:cfg.tip?cfg.tip.filter(n=>known.has(n)):null};
 }
 
 /* --------------------------------------------------------- rendering */
@@ -912,10 +919,10 @@ function toggleCfg(id,force){
   // isn't discoverable, and this is exactly the "several numbers, several colors, a
   // legend" case - restricted to one x (time or otherwise), several y's.
   const yControl=multiSeries
-    ?`<div class="ymulti"><label>Y (pick one or more)</label><div class="chips">${numCols.map(k=>
-        `<label class="chip-check"><input type="checkbox" value="${esc(k.name)}" onchange="toggleY('${id}',this)"
-           ${yArr.includes(k.name)?"checked":""}> ${esc(k.name)}</label>`).join("")}</div></div>`
+    ?checklist(id,"y","Y",numCols.map(k=>k.name),yArr,"toggleY")
     :`<div><label>Y</label><select onchange="setCfg('${id}','y',this.value)">${opt(sp.y,true)}</select></div>`;
+  const tipControl=sp.type==="stat"||sp.type==="table"?""
+    :checklist(id,"tip","Tooltip",r.columns.map(k=>k.name),sp.tip??plottedCols(sp),"toggleTip");
   el.innerHTML=`
     <div><label>Chart</label><select onchange="setCfg('${id}','type',this.value)">
       ${types.map(t=>`<option value="${t}"${(cfg.type||"auto")===t?" selected":""}>${t==="auto"?"auto ("+sp.type+")":t}</option>`).join("")}</select></div>
@@ -923,7 +930,26 @@ function toggleCfg(id,force){
     ${yControl}
     ${multiSeries&&yArr.length>1?"":`<div><label>Color</label><select onchange="setCfg('${id}','color',this.value)">${opt(sp.color,true)}</select></div>`}
     <div><label>Size</label><select onchange="setCfg('${id}','size',this.value)">${opt(sp.size,true)}</select></div>
+    ${tipControl}
     <div style="align-self:end"><button class="ghost sm" onclick="setCfg('${id}',null)">Reset to auto</button></div>`;
+}
+// Several columns from a short list: a select-like dropdown of checkboxes. It
+// stays open across the re-render each tick causes, and closes on a click outside.
+function checklist(id,key,label,names,checked,handler){
+  const summary=!checked.length?"none":checked.length<=2?checked.join(", "):`${checked.length} selected`;
+  return `<div><label>${label}</label><details class="dd"${cell(id)._dd===key?" open":""} ontoggle="ddToggle(this,'${id}','${key}')">
+    <summary>${esc(summary)}</summary><div class="ddmenu">${names.map(n=>`<label class="ddopt">
+      <input type="checkbox" value="${esc(n)}" onchange="cell('${id}')._dd='${key}';${handler}('${id}',this)"${checked.includes(n)?" checked":""}> ${esc(n)}</label>`).join("")}
+    </div></details></div>`;
+}
+function ddToggle(d,id,key){ const c=cell(id); if(d.open) c._dd=key; else if(c._dd===key) c._dd=null; }
+document.addEventListener("click",e=>document.querySelectorAll("details.dd[open]").forEach(d=>{ if(!d.contains(e.target)) d.open=false; }));
+// The tooltip shows the plotted columns until someone picks its columns by hand.
+const plottedCols=sp=>[...new Set([sp.x,...[sp.y].flat(),sp.color,sp.size].filter(Boolean))];
+function toggleTip(id,el){
+  const c=cell(id), sp=spec(c,S.results[id]), prev=sp.tip??plottedCols(sp);
+  c.chart={...(c.chart||{}),tip:el.checked?[...prev.filter(n=>n!==el.value),el.value]:prev.filter(n=>n!==el.value)};
+  renderOut(id); saveDraft(); if(c._cfgOpen) toggleCfg(id,true);
 }
 function toggleY(id,el){
   const c=cell(id), r=S.results[id], sp=spec(c,r);
@@ -954,6 +980,18 @@ const cssVar=(n,el=document.body)=>getComputedStyle(el).getPropertyValue(n).trim
 const fmtNum=v=>v==null?"":typeof v!=="number"?String(v):Math.abs(v)>=1e6?Intl.NumberFormat(undefined,{notation:"compact",maximumFractionDigits:2}).format(v)
                  :Number.isInteger(v)?v.toLocaleString():v.toLocaleString(undefined,{maximumFractionDigits:2});
 
+// A mark's tooltip options. With no choice, Plot's own: every channel the mark
+// draws. With a list, only those columns: drawn channels outside it are hidden
+// and the other columns ride along as extra channels. An empty list: no tooltip.
+function tipOptions(plotted,chosen){
+  if(!chosen) return {tip:true};
+  if(!chosen.length) return {tip:false};
+  const format=Object.fromEntries(Object.entries(plotted)
+    .filter(([,cols])=>cols&&![cols].flat().some(n=>chosen.includes(n))).map(([ch])=>[ch,false]));
+  const drawn=new Set(Object.values(plotted).flat());
+  const channels=Object.fromEntries(chosen.filter(n=>!drawn.has(n)).map(n=>["col:"+n,{value:n,label:n}]));
+  return {channels,tip:{format}};
+}
 function drawChart(host,r,sp,c){
   host.innerHTML="";
   if(sp.type==="stat"){
@@ -987,7 +1025,8 @@ function drawChart(host,r,sp,c){
       if(horizontal){
         o.y={label:sp.x,domain:cats}; o.x={label:sp.y,grid:true}; o.marginLeft=Math.min(200,12+7*Math.max(...cats.map(s=>s.length)));
         o.height=Math.max(140,26*cats.length+50);
-        marks.push(Plot.barX(data,{y:d=>catLabel(d[sp.x]),x:sp.y,fill:sp.color||series[0],insetTop:1,insetBottom:1,tip:true}));
+        marks.push(Plot.barX(data,{y:d=>catLabel(d[sp.x]),x:sp.y,fill:sp.color||series[0],insetTop:1,insetBottom:1,
+                                  ...tipOptions({y:sp.x,x:sp.y,fill:sp.color},sp.tip)}));
         marks.push(Plot.ruleX([0],{stroke:cssVar("--line")}));
       }else{
         // Forced vertical with many/long categories: rotate the labels so they
@@ -996,7 +1035,8 @@ function drawChart(host,r,sp,c){
         const crowded=cats.length>8||cats.some(s=>s.length>10);
         o.x={label:sp.x,domain:cats,...(crowded?{tickRotate:-40}:{})};
         if(crowded) o.marginBottom=Math.min(140,50+3*Math.max(...cats.map(s=>s.length)));
-        marks.push(Plot.barY(data,{x:d=>catLabel(d[sp.x]),y:sp.y,fill:sp.color||series[0],insetLeft:1,insetRight:1,tip:true}));
+        marks.push(Plot.barY(data,{x:d=>catLabel(d[sp.x]),y:sp.y,fill:sp.color||series[0],insetLeft:1,insetRight:1,
+                                  ...tipOptions({x:sp.x,y:sp.y,fill:sp.color},sp.tip)}));
         marks.push(Plot.ruleY([0],{stroke:cssVar("--line")}));
       }
     }else if(sp.type==="line"||sp.type==="area"){
@@ -1010,10 +1050,14 @@ function drawChart(host,r,sp,c){
       if(sp.type==="area") marks.push(Plot.areaY(sorted,{x:sp.x,y:"value",fill:stroke,fillOpacity:.25,z}));
       marks.push(Plot.lineY(sorted,{x:sp.x,y:"value",stroke,strokeWidth:2,z}));
       if(sorted.length<=200) marks.push(Plot.dot(sorted,{x:sp.x,y:"value",fill:stroke,r:3}));
-      marks.push(Plot.tip(sorted,Plot.pointerX({x:sp.x,y:"value",stroke:multiY?"series":(sp.color||undefined)})));
+      // Several lines: a chosen tooltip lists the row's own columns at that x
+      // rather than one series' value, so it hides the drawn y and series.
+      const t=tipOptions(multiY?{x:sp.x,y:[],stroke:[]}:{x:sp.x,y:yNames,stroke:sp.color},sp.tip);
+      if(t.tip) marks.push(Plot.tip(sorted,Plot.pointerX({x:sp.x,y:"value",stroke:multiY?"series":(sp.color||undefined),
+                                                            channels:t.channels,format:t.tip.format})));
     }else{ // scatter
       marks.push(Plot.dot(data,{x:sp.x,y:sp.y,stroke:sp.color||series[0],fill:sp.color||series[0],fillOpacity:.35,
-                                r:sp.size?sp.size:4,tip:true}));
+                                r:sp.size?sp.size:4,...tipOptions({x:sp.x,y:sp.y,stroke:sp.color,fill:sp.color,r:sp.size},sp.tip)}));
       if(sp.size) o.r={range:[3,18]};
     }
     const fig=Plot.plot({...o,marks}); host.appendChild(fig);
@@ -1117,8 +1161,8 @@ document.addEventListener("keydown",e=>{ if(e.key==="Escape"&&S.present) setPres
 // What goes to disk (or the local draft): cell definitions plus each cell's
 // last result, so opening a notebook shows it instantly with no re-query and
 // no agent call - Run/Run all refreshes a cell on request.
-function cleanCells(){ return S.nb.cells.map(c=>{ const {type,x,y,color,size,view,span,h}=c.chart||{};
-  return {id:c.id,kind:c.kind,title:c.title||"",text:c.text||"",chart:{type:type||"auto",x,y,color,size,view:view||null,span,h},
+function cleanCells(){ return S.nb.cells.map(c=>{ const {type,x,y,color,size,view,span,h,tip}=c.chart||{};
+  return {id:c.id,kind:c.kind,title:c.title||"",text:c.text||"",chart:{type:type||"auto",x,y,color,size,view:view||null,span,h,tip},
           result:c.result||null}; }); }
 let draftT; function saveDraft(){ fitName(); clearTimeout(draftT); draftT=setTimeout(()=>{
   try{ localStorage.setItem(DRAFT_KEY,JSON.stringify({name:$("nbName").value,cells:cleanCells(),palette:S.nb.palette||null})); }catch{}
