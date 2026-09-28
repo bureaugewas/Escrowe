@@ -43,11 +43,13 @@
   textarea{resize:vertical;min-height:74px}
   textarea.code{font:12.5px/1.45 ui-monospace,SFMono-Regular,Menlo,monospace}
   /* A highlighted editor: the colored text is a <pre> behind a textarea whose own
-     text is transparent, so typing, selection and undo stay the browser's own. */
+     text is transparent, so typing, selection and undo stay the browser's own.
+     Neither wraps: the browser breaks editable text by its own rules, which
+     would put the caret on a different line than the colored text. */
   .hl{position:relative}
   .hl pre{position:absolute;inset:0;margin:0;overflow:hidden;pointer-events:none;
-          font:12.5px/1.45 ui-monospace,SFMono-Regular,Menlo,monospace;padding:9px 10px;overflow-wrap:break-word}
-  .hl textarea{position:relative;background:transparent;color:transparent;caret-color:var(--text)}
+          font:12.5px/1.45 ui-monospace,SFMono-Regular,Menlo,monospace;padding:9px 10px;white-space:pre}
+  .hl textarea{position:relative;background:transparent;color:transparent;caret-color:var(--text);white-space:pre}
   .hl textarea::placeholder{color:var(--dim)}
   .tk{color:var(--hk);font-weight:600}.ts{color:var(--hs)}.tn{color:var(--hn)}.tf{color:var(--hf)}.tc{color:var(--hc);font-style:italic}
   .sqlnote summary{cursor:pointer}
@@ -176,8 +178,8 @@
   .gridWrap table{display:table;table-layout:fixed;width:auto;margin:0;overflow:visible;max-height:none}
   .gridWrap th,.gridWrap td{overflow:hidden;text-overflow:ellipsis}
   .gridWrap th{padding-right:14px}
-  .gridWrap .grip{position:absolute;top:0;right:-3px;width:7px;height:100%;cursor:col-resize;z-index:1}
-  .gridWrap .grip:hover,.gridWrap .grip.on{background:var(--accent);opacity:.5}
+  .gridWrap .colgrip{position:absolute;top:0;right:-3px;width:7px;height:100%;cursor:col-resize;z-index:1}
+  .gridWrap .colgrip:hover,.gridWrap .colgrip.on{background:var(--accent);opacity:.5}
   pre{background:var(--panel2);border:1px solid var(--line);border-radius:8px;padding:10px;
       overflow:auto;font-size:12px;white-space:pre-wrap;margin:8px 0 0}
   .banner{border-radius:8px;padding:9px 12px;margin-top:10px;font-size:13px}
@@ -210,8 +212,12 @@
   .chart{margin-top:8px;overflow:hidden}
   .chart svg{max-width:100%;height:auto;font:11px -apple-system,"Segoe UI",Roboto,sans-serif}
   .chart figure{margin:0}
-  .chart [aria-label="tip"] text{fill:var(--text)}
-  .chart [aria-label="tip"] path{fill:var(--panel);stroke:var(--line)}
+  .tipbox{position:fixed;left:0;top:0;z-index:50;max-width:360px;pointer-events:none;display:grid;
+          grid-template-columns:auto 1fr;gap:3px 10px;padding:8px 11px;font-size:12px;line-height:1.4;
+          background:var(--panel);color:var(--text);border:1px solid var(--line);border-radius:8px;
+          box-shadow:0 6px 18px rgba(0,0,0,.14);overflow-wrap:anywhere}
+  .tipbox .k{color:var(--dim);white-space:nowrap}
+  .tipbox[hidden]{display:none}
   .stats{display:flex;gap:10px;flex-wrap:wrap;margin-top:8px}
   .stat{flex:1;min-width:140px;background:var(--panel2);border:1px solid var(--line);border-radius:8px;padding:12px 14px}
   .stat .v{font-size:30px;font-weight:600;line-height:1.15;letter-spacing:-.01em}
@@ -680,8 +686,9 @@ function highlight(ta){
   const wrap=document.createElement("div"), pre=document.createElement("pre");
   wrap.className="hl"; pre.setAttribute("aria-hidden","true"); ta.spellcheck=false;
   ta.before(wrap); wrap.append(pre,ta);
-  const paint=()=>{ pre.innerHTML=highlightSql(ta.value)+"\n"; pre.scrollTop=ta.scrollTop; };
-  ta.addEventListener("input",paint); ta.addEventListener("scroll",()=>{ pre.scrollTop=ta.scrollTop; });
+  const sync=()=>{ pre.scrollTop=ta.scrollTop; pre.scrollLeft=ta.scrollLeft; };
+  const paint=()=>{ pre.innerHTML=highlightSql(ta.value)+"\n"; sync(); };
+  ta.addEventListener("input",paint); ta.addEventListener("scroll",sync);
   paint();
 }
 
@@ -834,8 +841,18 @@ function spec(c,res){
 }
 
 /* --------------------------------------------------------- rendering */
+// Rebuilding an output briefly empties it, and the page and any open dropdown
+// list lose their scroll; put them back so picking several options stays put.
 function renderOut(id){
-  const c=cell(id), el=document.querySelector(`[data-id="${id}"]`), out=el.querySelector(".out"); if(!c) return;
+  const el=document.querySelector(`[data-id="${id}"]`), scrolled=[];
+  for(let n=el;n;n=n.parentElement) if(n.scrollTop) scrolled.push([n,n.scrollTop]);
+  const menus=[...el.querySelectorAll(".ddmenu")].map(m=>m.scrollTop);
+  drawOut(id,el);
+  scrolled.forEach(([n,t])=>{ n.scrollTop=t; });
+  el.querySelectorAll(".ddmenu").forEach((m,i)=>{ m.scrollTop=menus[i]||0; });
+}
+function drawOut(id,el){
+  const c=cell(id), out=el.querySelector(".out"); if(!c) return;
   const r=S.results[id];
   el.classList.toggle("wide",!!(r&&r.wide));
   if(c.kind==="md"){ out.innerHTML=`<div class="prose">${markdown(c.text)}</div>`; return; }
@@ -885,11 +902,11 @@ function tableEl(r){
   const cols=r.columns.map(()=>COL_W), t=document.createElement("table");
   const fit=()=>{ t.style.width=cols.reduce((a,b)=>a+b,0)+"px"; };
   t.innerHTML=`<colgroup>${cols.map(w=>`<col style="width:${w}px">`).join("")}</colgroup>`
-    + `<thead><tr>${r.columns.map(c=>`<th title="${esc(c.name)}">${esc(c.name)}<span class="grip"></span></th>`).join("")}</tr></thead><tbody>`
+    + `<thead><tr>${r.columns.map(c=>`<th title="${esc(c.name)}">${esc(c.name)}<span class="colgrip"></span></th>`).join("")}</tr></thead><tbody>`
     + r.rows.slice(0,500).map(row=>`<tr>${row.map((v,i)=>`<td class="${r.columns[i].type==="number"?"num":""}" title="${esc(v)}">${esc(v)}</td>`).join("")}</tr>`).join("")
     + `</tbody>`;
   const colEls=t.querySelectorAll("col");
-  t.querySelectorAll(".grip").forEach((g,i)=>g.onpointerdown=e=>{
+  t.querySelectorAll(".colgrip").forEach((g,i)=>g.onpointerdown=e=>{
     e.preventDefault(); g.setPointerCapture(e.pointerId); g.classList.add("on");
     const x0=e.clientX, w0=cols[i];
     g.onpointermove=m=>{ cols[i]=Math.max(COL_MIN,w0+m.clientX-x0); colEls[i].style.width=cols[i]+"px"; fit(); };
@@ -949,7 +966,7 @@ const plottedCols=sp=>[...new Set([sp.x,...[sp.y].flat(),sp.color,sp.size].filte
 function toggleTip(id,el){
   const c=cell(id), sp=spec(c,S.results[id]), prev=sp.tip??plottedCols(sp);
   c.chart={...(c.chart||{}),tip:el.checked?[...prev.filter(n=>n!==el.value),el.value]:prev.filter(n=>n!==el.value)};
-  renderOut(id); saveDraft(); if(c._cfgOpen) toggleCfg(id,true);
+  renderOut(id); saveDraft();
 }
 function toggleY(id,el){
   const c=cell(id), r=S.results[id], sp=spec(c,r);
@@ -959,7 +976,7 @@ function toggleY(id,el){
   const chosen=el.checked?[...prev.filter(y=>y!==el.value),el.value]:prev.filter(y=>y!==el.value);
   c.chart={...(c.chart||{}), type:c.chart?.type&&c.chart.type!=="auto"?c.chart.type:sp.type,
            x:sp.x, y:chosen.length?(chosen.length===1?chosen[0]:chosen):null, color:null, size:sp.size, view:"chart"};
-  renderOut(id); saveDraft(); if(c._cfgOpen) toggleCfg(id,true);
+  renderOut(id); saveDraft();
 }
 function setCfg(id,k,v){
   const c=cell(id);
@@ -972,7 +989,7 @@ function setCfg(id,k,v){
   }
   else{ const sp=spec(c,S.results[id]); c.chart={...(c.chart||{}),type:c.chart?.type&&c.chart.type!=="auto"?c.chart.type:sp.type,
           x:sp.x,y:sp.y,color:sp.color,size:sp.size,[k]:v||null}; }
-  c.chart.view="chart"; renderOut(id); saveDraft(); if(c._cfgOpen) toggleCfg(id,true);
+  c.chart.view="chart"; renderOut(id); saveDraft();
 }
 
 /* ------------------------------------------------------------ charts */
@@ -980,20 +997,34 @@ const cssVar=(n,el=document.body)=>getComputedStyle(el).getPropertyValue(n).trim
 const fmtNum=v=>v==null?"":typeof v!=="number"?String(v):Math.abs(v)>=1e6?Intl.NumberFormat(undefined,{notation:"compact",maximumFractionDigits:2}).format(v)
                  :Number.isInteger(v)?v.toLocaleString():v.toLocaleString(undefined,{maximumFractionDigits:2});
 
-// A mark's tooltip options. With no choice, Plot's own: every channel the mark
-// draws. With a list, only those columns: drawn channels outside it are hidden
-// and the other columns ride along as extra channels. An empty list: no tooltip.
-function tipOptions(plotted,chosen){
-  if(!chosen) return {tip:true};
-  if(!chosen.length) return {tip:false};
-  const format=Object.fromEntries(Object.entries(plotted)
-    .filter(([,cols])=>cols&&![cols].flat().some(n=>chosen.includes(n))).map(([ch])=>[ch,false]));
-  const drawn=new Set(Object.values(plotted).flat());
-  const channels=Object.fromEntries(chosen.filter(n=>!drawn.has(n)).map(n=>["col:"+n,{value:n,label:n}]));
-  return {channels,tip:{format}};
+// A date at midnight UTC is a plain date, not "2:00 AM" in local time.
+const fmtTip=v=>v instanceof Date?(v%864e5?v.toLocaleString():d3.utcFormat("%Y-%m-%d")(v)):fmtNum(v);
+// The hover box. Plot's pointer picks the row; the box lists its tooltip columns
+// in HTML, so long values wrap in full (Plot's own tip cuts them off). It sits
+// up and to the right of the cursor, flipping at the window's edges, so it
+// never covers the point being read.
+const tipBox=Object.assign(document.createElement("div"),{className:"tipbox",hidden:true});
+document.body.append(tipBox);
+addEventListener("scroll",()=>{ tipBox.hidden=true; },true);
+function hoverTip(fig,cols){
+  let mx=0, my=0;
+  const place=()=>{
+    const gap=14, w=tipBox.offsetWidth, h=tipBox.offsetHeight;
+    const x=mx+gap+w>innerWidth-8?mx-gap-w:mx+gap, y=my-gap-h<8?my+gap:my-gap-h;
+    tipBox.style.transform=`translate(${Math.max(8,x)}px,${y}px)`;
+  };
+  // Capture: the cursor is known before Plot's own handler picks the row.
+  fig.addEventListener("pointermove",e=>{ mx=e.clientX; my=e.clientY; if(!tipBox.hidden) place(); },true);
+  fig.addEventListener("pointerleave",()=>{ tipBox.hidden=true; });
+  fig.addEventListener("input",()=>{
+    const d=fig.value; tipBox.hidden=d==null; if(d==null) return;
+    // Empty columns are left out: in a row split by speaker, half of them are.
+    tipBox.innerHTML=cols.filter(n=>d[n]!=null&&d[n]!=="").map(n=>`<span class="k">${esc(n)}</span><span>${esc(fmtTip(d[n]))}</span>`).join("");
+    place();
+  });
 }
 function drawChart(host,r,sp,c){
-  host.innerHTML="";
+  host.innerHTML=""; tipBox.hidden=true;
   if(sp.type==="stat"){
     const row=r.data[0]||{}, cols=r.columns.filter(k=>k.type==="number"), show=cols.length?cols:r.columns;
     host.innerHTML=`<div class="stats">${show.slice(0,6).map(k=>`<div class="stat"><div class="v">${esc(fmtNum(row[k.name]))}</div><div class="l">${esc(k.name)}</div></div>`).join("")}</div>`;
@@ -1006,6 +1037,8 @@ function drawChart(host,r,sp,c){
   const data=r.data, xs=col(sp.x), yNames=Array.isArray(sp.y)?sp.y:sp.y?[sp.y]:[];
   if(!xs||!yNames.length||yNames.some(n=>!col(n))){ host.innerHTML=`<div class="dim">Pick an X and a Y column.</div>`; return; }
   const multiY=yNames.length>1;
+  // The tooltip's columns: the chosen ones, else the plotted ones. None: no hover.
+  const tipCols=sp.tip??plottedCols(sp), hover=tipCols.length>0, ink=cssVar("--text");
   const fmtDate=d3.timeFormat("%Y-%m-%d");
   // A bar category's label - String(Date) is ~50 chars ("Sat Jan 01 2024 00:00:00 GMT+0200 (Central
   // European Summer Time)"), which always tripped the "long labels -> go horizontal" heuristic below
@@ -1025,8 +1058,9 @@ function drawChart(host,r,sp,c){
       if(horizontal){
         o.y={label:sp.x,domain:cats}; o.x={label:sp.y,grid:true}; o.marginLeft=Math.min(200,12+7*Math.max(...cats.map(s=>s.length)));
         o.height=Math.max(140,26*cats.length+50);
-        marks.push(Plot.barX(data,{y:d=>catLabel(d[sp.x]),x:sp.y,fill:sp.color||series[0],insetTop:1,insetBottom:1,
-                                  ...tipOptions({y:sp.x,x:sp.y,fill:sp.color},sp.tip)}));
+        marks.push(Plot.barX(data,{y:d=>catLabel(d[sp.x]),x:sp.y,fill:sp.color||series[0],insetTop:1,insetBottom:1}));
+        if(hover) marks.push(Plot.barX(data,Plot.pointerY({y:d=>catLabel(d[sp.x]),x:sp.y,z:sp.color,fill:"none",stroke:ink,
+                                                           strokeWidth:1.5,insetTop:1,insetBottom:1})));
         marks.push(Plot.ruleX([0],{stroke:cssVar("--line")}));
       }else{
         // Forced vertical with many/long categories: rotate the labels so they
@@ -1035,8 +1069,9 @@ function drawChart(host,r,sp,c){
         const crowded=cats.length>8||cats.some(s=>s.length>10);
         o.x={label:sp.x,domain:cats,...(crowded?{tickRotate:-40}:{})};
         if(crowded) o.marginBottom=Math.min(140,50+3*Math.max(...cats.map(s=>s.length)));
-        marks.push(Plot.barY(data,{x:d=>catLabel(d[sp.x]),y:sp.y,fill:sp.color||series[0],insetLeft:1,insetRight:1,
-                                  ...tipOptions({x:sp.x,y:sp.y,fill:sp.color},sp.tip)}));
+        marks.push(Plot.barY(data,{x:d=>catLabel(d[sp.x]),y:sp.y,fill:sp.color||series[0],insetLeft:1,insetRight:1}));
+        if(hover) marks.push(Plot.barY(data,Plot.pointerX({x:d=>catLabel(d[sp.x]),y:sp.y,z:sp.color,fill:"none",stroke:ink,
+                                                           strokeWidth:1.5,insetLeft:1,insetRight:1})));
         marks.push(Plot.ruleY([0],{stroke:cssVar("--line")}));
       }
     }else if(sp.type==="line"||sp.type==="area"){
@@ -1050,17 +1085,15 @@ function drawChart(host,r,sp,c){
       if(sp.type==="area") marks.push(Plot.areaY(sorted,{x:sp.x,y:"value",fill:stroke,fillOpacity:.25,z}));
       marks.push(Plot.lineY(sorted,{x:sp.x,y:"value",stroke,strokeWidth:2,z}));
       if(sorted.length<=200) marks.push(Plot.dot(sorted,{x:sp.x,y:"value",fill:stroke,r:3}));
-      // Several lines: a chosen tooltip lists the row's own columns at that x
-      // rather than one series' value, so it hides the drawn y and series.
-      const t=tipOptions(multiY?{x:sp.x,y:[],stroke:[]}:{x:sp.x,y:yNames,stroke:sp.color},sp.tip);
-      if(t.tip) marks.push(Plot.tip(sorted,Plot.pointerX({x:sp.x,y:"value",stroke:multiY?"series":(sp.color||undefined),
-                                                            channels:t.channels,format:t.tip.format})));
+      // Every long row keeps its original columns, so the box can list all the y values at that x.
+      if(hover) marks.push(Plot.dot(sorted,Plot.pointerX({x:sp.x,y:"value",fill:stroke,r:5,stroke:cssVar("--panel"),strokeWidth:2})));
     }else{ // scatter
-      marks.push(Plot.dot(data,{x:sp.x,y:sp.y,stroke:sp.color||series[0],fill:sp.color||series[0],fillOpacity:.35,
-                                r:sp.size?sp.size:4,...tipOptions({x:sp.x,y:sp.y,stroke:sp.color,fill:sp.color,r:sp.size},sp.tip)}));
+      marks.push(Plot.dot(data,{x:sp.x,y:sp.y,stroke:sp.color||series[0],fill:sp.color||series[0],fillOpacity:.35,r:sp.size?sp.size:4}));
+      if(hover) marks.push(Plot.dot(data,Plot.pointer({x:sp.x,y:sp.y,r:sp.size?sp.size:4,fill:"none",stroke:ink,strokeWidth:1.5})));
       if(sp.size) o.r={range:[3,18]};
     }
     const fig=Plot.plot({...o,marks}); host.appendChild(fig);
+    if(hover) hoverTip(fig,tipCols);
     fig.querySelectorAll('[aria-label$="grid"] line').forEach(l=>l.setAttribute("stroke",cssVar("--grid")));
   }catch(e){ host.innerHTML=`<div class="banner bad">Could not chart this: ${esc(e.message)}</div>`; host.appendChild(tableEl(r)); }
 }
