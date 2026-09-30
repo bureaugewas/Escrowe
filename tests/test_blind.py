@@ -54,6 +54,13 @@ def test_a_reply_that_is_not_a_query_is_surfaced_as_prose(svc, alice):
     assert svc.store.audit_rows(alice.user)[0]["decision"] == "answered"
 
 
+def test_a_query_whose_fence_is_left_open_is_still_a_query():
+    """Models sometimes end on the SQL without the closing fence, after a line of prose."""
+    from escrowe.agent import parse_reply
+    r = parse_reply("Let me check the join first.\n\n```sql\n-- probe\nSELECT count(*) FROM customers")
+    assert r.sql == "SELECT count(*) FROM customers" and r.probe and r.answer is None
+
+
 def test_agent_result_never_contains_rows_type():
     """AgentResult must stay incapable of carrying data back from a query.
     Adding a field here is fine; adding one that could hold rows is not."""
